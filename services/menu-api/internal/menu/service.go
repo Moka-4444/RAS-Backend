@@ -85,15 +85,10 @@ func (s *Service) CreateRequest(ctx context.Context, in CreateRequestInput) (*Me
 	return req, nil
 }
 
-// ============================================================
-// 2. Approve Menu Request (CEO only)
-// Ref: FR-MENU-005
-// ============================================================
-
 type ApproveRequestInput struct {
 	RequestID string
-	ActorRole string // CEO only
-	SKU       string // SKU اللي الـ CEO بيديه للصنف
+	ActorRole string
+	SKU       string
 }
 
 func (s *Service) ApproveRequest(ctx context.Context, in ApproveRequestInput) (*MenuItem, error) {
@@ -140,6 +135,15 @@ func (s *Service) ApproveRequest(ctx context.Context, in ApproveRequestInput) (*
 	}
 	if err := s.repo.CreateMenuItem(ctx, tx, newItem); err != nil {
 		return nil, err
+	}
+
+	// 3. إضافة سجل في الـ Audit Log
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'APPROVE', 'MENU_ITEM', $3, 'Menu request approved')
+	`, req.RequestedBy, in.ActorRole, req.ID)
+	if err != nil {
+		return nil, fmt.Errorf("audit log: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
