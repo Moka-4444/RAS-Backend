@@ -27,6 +27,32 @@ SELECT format('ALTER ROLE menu_app WITH LOGIN PASSWORD %L', :'menu_password')
 \gexec
 ALTER ROLE menu_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
 
+SELECT format('CREATE ROLE inventory_app LOGIN PASSWORD %L', :'inventory_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'inventory_app')
+\gexec
+SELECT format('ALTER ROLE inventory_app WITH LOGIN PASSWORD %L', :'inventory_password')
+\gexec
+ALTER ROLE inventory_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
+SELECT format('CREATE ROLE central_kitchen_app LOGIN PASSWORD %L', :'central_kitchen_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'central_kitchen_app')
+\gexec
+SELECT format('ALTER ROLE central_kitchen_app WITH LOGIN PASSWORD %L', :'central_kitchen_password')
+\gexec
+ALTER ROLE central_kitchen_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
+SELECT format('CREATE ROLE cost_app LOGIN PASSWORD %L', :'cost_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cost_app')
+\gexec
+SELECT format('ALTER ROLE cost_app WITH LOGIN PASSWORD %L', :'cost_password')
+\gexec
+ALTER ROLE cost_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
+SELECT format('CREATE ROLE sales_app LOGIN PASSWORD %L', :'sales_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sales_app')
+\gexec
+SELECT format('ALTER ROLE sales_app WITH LOGIN PASSWORD %L', :'sales_password')
+\gexec
+ALTER ROLE sales_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
+SELECT format('CREATE ROLE transfer_app LOGIN PASSWORD %L', :'transfer_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'transfer_app')
+\gexec
+SELECT format('ALTER ROLE transfer_app WITH LOGIN PASSWORD %L', :'transfer_password')
+\gexec
+ALTER ROLE transfer_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
+
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO auth_app, branch_app, attendance_app, menu_app;
-GRANT CONNECT ON DATABASE restaurant_db TO auth_app, branch_app, attendance_app, menu_app;
+GRANT USAGE ON SCHEMA public TO auth_app, branch_app, attendance_app, menu_app, inventory_app, central_kitchen_app, cost_app, sales_app, transfer_app;
+GRANT CONNECT ON DATABASE restaurant_db TO auth_app, branch_app, attendance_app, menu_app, inventory_app, central_kitchen_app, cost_app, sales_app, transfer_app;

@@ -54,6 +54,11 @@ jobs:
           -v branch_password=ci_branch_password
           -v attendance_password=ci_attendance_password
           -v menu_password=ci_menu_password
+          -v inventory_password=ci_inventory_password
+          -v central_kitchen_password=ci_central_kitchen_password
+          -v cost_password=ci_cost_password
+          -v sales_password=ci_sales_password
+          -v transfer_password=ci_transfer_password
           -f database/bootstrap/roles.sql
       - name: Apply complete migration history to fresh database
         env:
