@@ -109,9 +109,7 @@ type Transfer struct {
 type TransferView struct {
 	Transfer
 	SourceBranchName string `db:"source_branch_name" json:"source_branch_name"`
-	SourceBranchCode string `db:"source_branch_code" json:"source_branch_code"`
 	DestBranchName   string `db:"dest_branch_name" json:"dest_branch_name"`
-	DestBranchCode   string `db:"dest_branch_code" json:"dest_branch_code"`
 	GoodName         string `db:"good_name" json:"good_name"`
 	GoodSKU          string `db:"good_sku" json:"good_sku"`
 	GoodUnit         string `db:"good_unit" json:"good_unit"`
