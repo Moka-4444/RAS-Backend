@@ -62,6 +62,16 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Added `wget` to the runtime packages in all three Dockerfiles.
 - **Retest:** Full Compose CI smoke is running with the corrected images.
 
+### TF-008 — Role bootstrap passed literal environment placeholders to psql
+
+- **Test type:** Combined Docker Compose build and runtime smoke across all APIs.
+- **Symptom:** `central-kitchen-api` repeatedly failed database authentication; Compose then reported `auth-api` unhealthy because startup waited for the full dependency graph.
+- **Cause:** Changing the bootstrap entrypoint to `psql` fixed command invocation but also bypassed a shell. Compose's escaped `$$VAR` references therefore reached psql as literal `$VAR` strings instead of the configured passwords.
+- **Fix:** Run the bootstrap command through `/bin/sh -ec`, pass every password as a quoted psql variable, and `exec psql` so the container exits with psql's status.
+- **Why this fix:** It preserves Compose's required escaping of container environment references while ensuring expansion happens inside the container. Quoting keeps password values as single arguments.
+- **Retest:** Pending the next combined CI run; the previous run failed before API health verification completed.
+- **Prevention:** For Compose `$$` expressions, verify both stages: Compose must leave `$VAR` intact in the container command, and a shell must expand it before invoking the target program. Add an integration assertion for role login/passwords in the fresh database job.
+
 ### TF-003 — Integrated feature modules failed the combined Go suite
 
 - **Environment/commit:** Integrated candidate branch; Windows amd64; Go 1.27.2; 2026-11-15.

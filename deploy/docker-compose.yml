@@ -42,30 +42,19 @@ services:
       TRANSFER_DB_PASSWORD: ${TRANSFER_DB_PASSWORD:?Set TRANSFER_DB_PASSWORD in .env}
     volumes:
       - ../database/bootstrap/roles.sql:/bootstrap/roles.sql:ro
-    entrypoint: ["psql"]
-    command:
-      - -v
-      - ON_ERROR_STOP=1
-      - -v
-      - auth_password=$${AUTH_DB_PASSWORD}
-      - -v
-      - branch_password=$${BRANCH_DB_PASSWORD}
-      - -v
-      - attendance_password=$${ATTENDANCE_DB_PASSWORD}
-      - -v
-      - menu_password=$${MENU_DB_PASSWORD}
-      - -v
-      - inventory_password=$${INVENTORY_DB_PASSWORD}
-      - -v
-      - central_kitchen_password=$${CENTRAL_KITCHEN_DB_PASSWORD}
-      - -v
-      - cost_password=$${COST_DB_PASSWORD}
-      - -v
-      - sales_password=$${SALES_DB_PASSWORD}
-      - -v
-      - transfer_password=$${TRANSFER_DB_PASSWORD}
-      - -f
-      - /bootstrap/roles.sql
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      exec psql -v ON_ERROR_STOP=1
+      -v auth_password="$${AUTH_DB_PASSWORD}"
+      -v branch_password="$${BRANCH_DB_PASSWORD}"
+      -v attendance_password="$${ATTENDANCE_DB_PASSWORD}"
+      -v menu_password="$${MENU_DB_PASSWORD}"
+      -v inventory_password="$${INVENTORY_DB_PASSWORD}"
+      -v central_kitchen_password="$${CENTRAL_KITCHEN_DB_PASSWORD}"
+      -v cost_password="$${COST_DB_PASSWORD}"
+      -v sales_password="$${SALES_DB_PASSWORD}"
+      -v transfer_password="$${TRANSFER_DB_PASSWORD}"
+      -f /bootstrap/roles.sql
     restart: "no"
 
   migrate:
