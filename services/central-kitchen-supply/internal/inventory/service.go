@@ -275,6 +275,11 @@ func (s *Service) ApproveSupplyRequest(ctx context.Context, in ApproveSupplyRequ
 	if in.ActorRole != "SUPPLY_MANAGER" && in.ActorRole != "CEO" {
 		return nil, ErrForbiddenAction
 	}
+	for _, item := range in.Items {
+		if _, err := uuid.Parse(item.ItemID); err != nil || item.ApprovedQty < 0 {
+			return nil, errors.New("invalid approval item")
+		}
+	}
 
 	req, err := s.repo.GetSupplyRequestByID(ctx, in.RequestID)
 	if err != nil {
@@ -444,6 +449,11 @@ type ReceiveItemInput struct {
 func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequestInput) error {
 	if in.ActorRole != "BRANCH_MANAGER" && in.ActorRole != "CEO" {
 		return ErrForbiddenAction
+	}
+	for _, item := range in.Items {
+		if _, err := uuid.Parse(item.ItemID); err != nil || item.ReceivedQty < 0 {
+			return errors.New("invalid received quantity or item id")
+		}
 	}
 
 	req, err := s.repo.GetSupplyRequestByID(ctx, in.RequestID)

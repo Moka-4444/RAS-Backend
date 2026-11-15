@@ -97,6 +97,7 @@ func TestQARASS93CreateDiscountCapturesAmountAndReason(t *testing.T) {
 func TestQARASS93CancelDiscountPreservesOriginalFieldsAndRecordsAuditReason(t *testing.T) {
 	db, stats := newRASS93NoopDB(t)
 	repo := &rass93SalesRepository{
+		shift: &Shift{ID: rass93ShiftID, Status: "OPEN"},
 		discounts: map[string]*Discount{
 			rass93DiscountID: {
 				ID: rass93DiscountID, ShiftID: rass93ShiftID, Amount: 7.5, Reason: "service recovery", Status: "ACTIVE",

@@ -130,9 +130,9 @@ func TestUpdateOnlyPersistsActualChanges(t *testing.T) {
 	}
 
 	updated, err := service.Update(context.Background(), id, UpdateBranchRequest{
-		Name:              stringPointer("  New Name "),
-		Address:           stringPointer(" New Address "),
-		OfficialStartTime: stringPointer("10:30"),
+		Name:              serviceStringPointer("  New Name "),
+		Address:           serviceStringPointer(" New Address "),
+		OfficialStartTime: serviceStringPointer("10:30"),
 		LateRate:          &rate,
 		IsActive:          boolPointer(false),
 	})
@@ -150,42 +150,42 @@ func TestBranchTypeRevenueRules(t *testing.T) {
 	if !TypeBranch.GeneratesRevenue() {
 		t.Fatal("regular branches should generate revenue")
 	}
-
-	func TestNormalizeTimeRejectsBoundaryFormats(t *testing.T) {
-		for _, value := range []string{"24:00", "12:60", "12", "noon"} {
-			if _, err := normalizeTime(value); !errors.Is(err, ErrInvalidTime) {
-				t.Fatalf("normalizeTime(%q) error = %v, want ErrInvalidTime", value, err)
-			}
-		}
-	}
-
-	func TestValidateLateRateAcceptsZeroAndTwoDecimals(t *testing.T) {
-		for _, value := range []string{"0", "0.01", "10000.00"} {
-			if err := validateLateRate(decimal.RequireFromString(value)); err != nil {
-				t.Fatalf("validateLateRate(%q) error = %v", value, err)
-			}
-		}
-	}
-
-	func TestValidateNameTrimsUnicodeAndCountsRunes(t *testing.T) {
-		name, err := validateName("  مطعم  ")
-		if err != nil || name != "مطعم" {
-			t.Fatalf("validateName() = %q, %v", name, err)
-		}
-	}
-
-	func TestUpdatePropagatesRepositoryErrors(t *testing.T) {
-		repo := &serviceTestRepository{getErr: errors.New("database unavailable")}
-		_, err := NewService(repo, serviceTestClock{}).Update(context.Background(), uuid.New(), UpdateBranchRequest{})
-		if err == nil || !errors.Is(err, repo.getErr) {
-			t.Fatalf("Update() error = %v, want repository error", err)
-		}
-	}
 	if TypeCentralKitchen.GeneratesRevenue() {
 		t.Fatal("central kitchens should not generate revenue")
 	}
 }
 
-func stringPointer(value string) *string { return &value }
+func TestNormalizeTimeRejectsBoundaryFormats(t *testing.T) {
+	for _, value := range []string{"24:00", "12:60", "12", "noon"} {
+		if _, err := normalizeTime(value); !errors.Is(err, ErrInvalidTime) {
+			t.Fatalf("normalizeTime(%q) error = %v, want ErrInvalidTime", value, err)
+		}
+	}
+}
+
+func TestValidateLateRateAcceptsZeroAndTwoDecimals(t *testing.T) {
+	for _, value := range []string{"0", "0.01", "10000.00"} {
+		if err := validateLateRate(decimal.RequireFromString(value)); err != nil {
+			t.Fatalf("validateLateRate(%q) error = %v", value, err)
+		}
+	}
+}
+
+func TestValidateNameTrimsUnicodeAndCountsRunes(t *testing.T) {
+	name, err := validateName("  مطعم  ")
+	if err != nil || name != "مطعم" {
+		t.Fatalf("validateName() = %q, %v", name, err)
+	}
+}
+
+func TestUpdatePropagatesRepositoryErrors(t *testing.T) {
+	repo := &serviceTestRepository{getErr: errors.New("database unavailable")}
+	_, err := NewService(repo, serviceTestClock{}).Update(context.Background(), uuid.New(), UpdateBranchRequest{})
+	if err == nil || !errors.Is(err, repo.getErr) {
+		t.Fatalf("Update() error = %v, want repository error", err)
+	}
+}
+
+func serviceStringPointer(value string) *string { return &value }
 
 func boolPointer(value bool) *bool { return &value }

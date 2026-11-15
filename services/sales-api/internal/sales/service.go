@@ -201,6 +201,16 @@ func (s *Service) CancelDiscount(ctx context.Context, discountID string, in Canc
 	if d == nil {
 		return nil, ErrDiscountNotFound
 	}
+	shift, err := s.repo.GetShiftByID(ctx, d.ShiftID)
+	if err != nil {
+		return nil, err
+	}
+	if shift == nil {
+		return nil, ErrShiftNotFound
+	}
+	if shift.Status != "OPEN" {
+		return nil, ErrShiftNotOpen
+	}
 	if d.Status == "CANCELED" {
 		return nil, errors.New("discount is already canceled")
 	}

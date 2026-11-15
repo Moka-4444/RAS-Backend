@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,10 +76,17 @@ func writeError(c *gin.Context, status int, code, msg string) {
 
 func writeDomainError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrGoodNotFound), strings.Contains(strings.ToLower(err.Error()), "good item not found"):
+		writeError(c, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, ErrInvalidQuantity),
 		errors.Is(err, ErrInvalidMovementType),
-		errors.Is(err, ErrReasonRequired):
+		strings.Contains(strings.ToLower(err.Error()), "invalid"),
+		strings.Contains(strings.ToLower(err.Error()), "must be shipped first"):
+		writeError(c, http.StatusBadRequest, "invalid_payload", err.Error())
+	case errors.Is(err, ErrReasonRequired):
 		writeError(c, http.StatusBadRequest, "validation_error", err.Error())
+	case strings.Contains(strings.ToLower(err.Error()), "not found"):
+		writeError(c, http.StatusNotFound, "not_found", err.Error())
 
 	case errors.Is(err, ErrInsufficientStock):
 		writeError(c, http.StatusConflict, "insufficient_stock", err.Error())
