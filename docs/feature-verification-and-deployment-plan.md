@@ -9,8 +9,13 @@ Prepared: 2026-11-15
 - [x] Branch API test compilation defects fixed.
 - [x] Combined Go test suite run across all nine service modules; final run passed. See `test-results/combined-go-test-run.txt`.
 - [x] Docker Desktop Linux engine started; candidate Compose images built; isolated DB migrations completed; Auth, Branch, Attendance, and Menu health endpoints passed.
+- [x] Deployment definitions, Dockerfiles, shared migration, and runtime roles added for Inventory, Transfer, Sales, Cost, and Central Kitchen.
+- [x] GitHub fresh-database migration validation passed for the new shared feature schema.
+- [ ] Full Compose build, startup, and health checks for every API; Docker Desktop on the local machine is currently unavailable after its WSL dockerd process crashed.
+- [ ] GitHub full-Compose smoke check passes after fixing role bootstrap and missing health-check utilities.
 - [ ] Feature API/database contract matrix and compatibility review for every new service.
-- [ ] Add deployment definitions for Inventory, Transfer, Sales, Cost, and Central Kitchen Supply; run full-stack flows against PostgreSQL.
+- [x] Add deployment definitions for Inventory, Transfer, Sales, Cost, and Central Kitchen Supply.
+- [ ] Run full-stack feature flows against PostgreSQL for all services.
 - [ ] Update CI/reporting to preserve consolidated logs and all bug metadata for the integrated suite.
 - [ ] Final branch report, merge-readiness checks, and merge to `main`.
 

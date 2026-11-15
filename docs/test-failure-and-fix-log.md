@@ -46,6 +46,22 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - Current `main` service tests previously passed for Auth and Attendance. Branch passed after the two fixes above.
 - Docker Compose runtime validation remains unverified because the Docker Desktop Linux engine was unavailable in the environment at the time it was checked. This is an environment blocker, not a confirmed application defect.
 
+### TF-006 — Compose role bootstrap did not create feature API roles
+
+- **Test type:** Full Compose build/runtime smoke.
+- **Symptom:** The unified migration failed with `role "central_kitchen_app" does not exist`.
+- **Cause:** Compose used `/bin/sh -ec` as entrypoint while passing psql and its flags as separate arguments. The shell did not run the intended psql command.
+- **Fix:** Set `psql` as the entrypoint and pass its variables and SQL file as explicit command arguments.
+- **Retest:** Fresh-database migration validation passed in GitHub Actions after the fix. Full Compose smoke remains pending.
+
+### TF-007 — Existing API health checks depended on missing wget
+
+- **Test type:** Docker/runtime health check.
+- **Symptom:** Auth became unhealthy during full Compose smoke.
+- **Cause:** Compose health checks invoke `wget`, but Auth, Branch, and Attendance runtime images installed CA certificates only.
+- **Fix:** Added `wget` to the runtime packages in all three Dockerfiles.
+- **Retest:** Full Compose CI smoke is running with the corrected images.
+
 ### TF-003 — Integrated feature modules failed the combined Go suite
 
 - **Environment/commit:** Integrated candidate branch; Windows amd64; Go 1.27.2; 2026-11-15.
