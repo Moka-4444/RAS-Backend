@@ -11,15 +11,15 @@ Prepared: 2026-11-15
 - [x] Docker Desktop Linux engine started; candidate Compose images built; isolated DB migrations completed; Auth, Branch, Attendance, and Menu health endpoints passed.
 - [x] Deployment definitions, Dockerfiles, shared migration, and runtime roles added for Inventory, Transfer, Sales, Cost, and Central Kitchen.
 - [x] GitHub fresh-database migration validation passed for the new shared feature schema.
-- [ ] Full Compose build, startup, and health checks for every API; Docker Desktop on the local machine is currently unavailable after its WSL dockerd process crashed.
-- [ ] GitHub full-Compose smoke check passes after fixing role bootstrap and missing health-check utilities.
+- [x] GitHub full Compose build, startup, and health checks for all nine APIs passed on candidate `e8f23637d447a9a0a25839f3f0a82dd58f851e50` (run `43733645153`).
+- [x] Runtime-role bootstrap, shared migrations, and service health checks passed on a clean disposable PostgreSQL database.
 - [ ] Feature API/database contract matrix and compatibility review for every new service.
 - [x] Add deployment definitions for Inventory, Transfer, Sales, Cost, and Central Kitchen Supply.
 - [ ] Run full-stack feature flows against PostgreSQL for all services.
 - [ ] Update CI/reporting to preserve consolidated logs and all bug metadata for the integrated suite.
-- [ ] Final branch report, merge-readiness checks, and merge to `main`.
+- [ ] Final branch report and merge to `main` (all applicable CI gates are green; PR #24 is ready to merge).
 
-The test and health-check items above are marked done only for the candidate scope executed. Deployment and app/database integration are not complete until the remaining services are wired and exercised.
+All nine services are wired into the deployment and pass clean-stack startup and health checks. Authenticated business-flow checks against each API and external mobile-app compatibility remain outside the health smoke and must not be counted as verified until executed.
 
 ## Goal
 
@@ -109,4 +109,5 @@ Also report passed checks and skipped checks with reasons. Separate confirmed de
 ## Execution order at a glance
 
 `Inventory branches → map features/contracts/schema → verify integrations → add missing tests → rerun and report → maintain Docker/Compose → full-stack smoke verification`
+
 

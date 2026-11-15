@@ -60,7 +60,7 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Symptom:** Auth became unhealthy during full Compose smoke.
 - **Cause:** Compose health checks invoke `wget`, but Auth, Branch, and Attendance runtime images installed CA certificates only.
 - **Fix:** Added `wget` to the runtime packages in all three Dockerfiles.
-- **Retest:** Full Compose CI smoke is running with the corrected images.
+- **Retest:** Full Compose CI smoke passed for all nine APIs on commit `e8f23637d447a9a0a25839f3f0a82dd58f851e50` (run `43733645153`).
 
 ### TF-008 — Role bootstrap passed literal environment placeholders to psql
 
@@ -69,7 +69,7 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Cause:** Adding a mounted shell wrapper introduced another command-resolution boundary and still left credentials dependent on command/entrypoint behavior.
 - **Fix:** Removed the wrapper. The shared psql bootstrap file now reads all nine passwords directly from its process environment using psql `\\getenv` commands, and it raises an error unless all expected roles exist. Both Compose and the fresh-database workflow use the same direct `psql -f roles.sql` path.
 - **Why this fix:** psql itself handles environment-to-variable transfer, so no shell interpolation or argument forwarding is needed. The role postcondition makes silent bootstrap success impossible.
-- **Retest:** Pending the next combined CI run.
+- **Retest:** Fresh-database role and migration validation passed, and the all-service Compose smoke passed on commit `e8f23637d447a9a0a25839f3f0a82dd58f851e50` (GitHub Actions run `43733645153`).
 - **Prevention:** Keep database bootstrap behavior identical between CI and Compose, and validate the resulting role state inside the bootstrap transaction/path before allowing dependent migrations to run.
 
 ### TF-009 — Inventory API attempted DDL with its restricted runtime role
@@ -79,7 +79,7 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Cause:** Inventory re-ran DDL migrations during API startup using `inventory_app`. Runtime roles intentionally lack schema ownership and `CREATE` privileges, and the same inventory schema is already provisioned by the privileged shared migration runner.
 - **Fix:** Removed the redundant embedded migration call from Inventory startup. Deployment's Goose service remains the single DDL migration owner and Compose starts Inventory only after that service succeeds.
 - **Why this fix:** Schema changes run once under the dedicated migration account; API connections retain least privilege for their runtime queries.
-- **Retest:** Pending the next combined CI run.
+- **Retest:** All nine API images built and the full Compose stack became healthy; all health endpoints passed on commit `e8f23637d447a9a0a25839f3f0a82dd58f851e50` (run `43733645153`).
 - **Prevention:** Keep schema migration execution in the dedicated deploy migration stage; runtime services should only connect and serve requests under their restricted database roles.
 
 ### TF-003 — Integrated feature modules failed the combined Go suite
@@ -99,5 +99,13 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Retest:** Compose image builds succeeded for Auth, Branch, Attendance, Menu, and the Goose migration runner. On an isolated smoke database, Goose migrations completed and all four API containers reported healthy; `/health` returned 200 on ports 9001, 9002, 9003, and 9005.
 - **Additional issue and handling:** Menu's Dockerfile used Go 1.23 despite its module requiring 1.27.2; updated the builder/runtime stages and rebuilt successfully. An initial smoke environment also had an occupied host port and mismatched development seed settings; used a separate smoke volume/port and production mode for the disposable health-only Auth check. Existing local database data was retained.
 - **Scope limitation:** Current Compose still does not include Inventory, Transfer, Sales, Cost, or Central Kitchen services. Their integration into deployment and feature-level DB flows remain open.
+
+### TF-010 — Final integrated candidate verification
+
+- **Environment/commit:** GitHub Actions `ubuntu-latest`; PR #24 head `e8f23637d447a9a0a25839f3f0a82dd58f851e50`; 2026-11-15.
+- **Test types:** Combined Go unit/build suite, feature service tests, OpenAPI lint, fresh-database migration/schema/role validation, service-specific CI validation, Docker image build, Compose runtime startup, and HTTP health smoke.
+- **Result:** PASS. All nine API services built and became healthy after role bootstrap and shared migrations. Health endpoints passed for ports 9001–9008 and 9010. Combined Go tests, feature service tests, migration checks, OpenAPI lint, and existing API validations passed.
+- **Evidence:** [Full Compose Actions run](https://github.com/NorthstarEngineering/RAS-Backend/actions/runs/43733645153); [PR #24](https://github.com/NorthstarEngineering/RAS-Backend/pull/24).
+- **Remaining coverage boundary:** This verifies deployment startup, DB migrations/roles, and API liveness. It does not execute authenticated business transactions through every feature API or validate an external mobile app repository. Those remain separate integration coverage items.
 
 
