@@ -72,6 +72,16 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Retest:** Pending the next combined CI run.
 - **Prevention:** Keep database bootstrap behavior identical between CI and Compose, and validate the resulting role state inside the bootstrap transaction/path before allowing dependent migrations to run.
 
+### TF-009 — Inventory API attempted DDL with its restricted runtime role
+
+- **Test type:** Full Compose startup and database migration smoke.
+- **Symptom:** Role creation and Goose migrations succeeded, but Inventory became unhealthy with `permission denied for schema public` while creating its embedded migration tracking table.
+- **Cause:** Inventory re-ran DDL migrations during API startup using `inventory_app`. Runtime roles intentionally lack schema ownership and `CREATE` privileges, and the same inventory schema is already provisioned by the privileged shared migration runner.
+- **Fix:** Removed the redundant embedded migration call from Inventory startup. Deployment's Goose service remains the single DDL migration owner and Compose starts Inventory only after that service succeeds.
+- **Why this fix:** Schema changes run once under the dedicated migration account; API connections retain least privilege for their runtime queries.
+- **Retest:** Pending the next combined CI run.
+- **Prevention:** Keep schema migration execution in the dedicated deploy migration stage; runtime services should only connect and serve requests under their restricted database roles.
+
 ### TF-003 — Integrated feature modules failed the combined Go suite
 
 - **Environment/commit:** Integrated candidate branch; Windows amd64; Go 1.27.2; 2026-11-15.

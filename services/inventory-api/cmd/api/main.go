@@ -1,4 +1,5 @@
 package main
+
 import (
 	"context"
 	"errors"
@@ -14,8 +15,6 @@ import (
 	_ "github.com/lib/pq"
 
 	"inventory-api/internal/inventory"
-	"inventory-api/migrations"
-	
 )
 
 func main() {
@@ -40,14 +39,6 @@ func main() {
 	db.SetMaxOpenConns(20)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
-
-	migCtx, migCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	err = migrations.Up(migCtx, db.DB)
-	migCancel()
-	if err != nil {
-		logger.Error("migrations failed", "error", err)
-		os.Exit(1)
-	}
 
 	repo := inventory.NewRepository(db)
 	// TODO: replace the placeholders with real adapters (catalog service, users service).
@@ -102,3 +93,4 @@ func getEnv(k, def string) string {
 	}
 	return def
 }
+
