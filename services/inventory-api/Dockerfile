@@ -9,5 +9,5 @@ FROM alpine:3.22
 RUN apk --no-cache add ca-certificates wget
 WORKDIR /app
 COPY --from=build /out/api ./api
-EXPOSE 9004
+EXPOSE 9010
 CMD ["./api"]
