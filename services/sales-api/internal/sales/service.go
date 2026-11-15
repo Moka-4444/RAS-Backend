@@ -3,7 +3,7 @@ package sales
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -261,19 +261,21 @@ func (s *Service) CloseShift(ctx context.Context, in CloseShiftRequest) (*Shift,
 		return nil, err
 	}
 
-	// 2. إضافة سجل في الـ Audit Log
-	_, err = tx.ExecContext(ctx, `
+	// 2. إضافة سجل في الـ Audit Log (بدون ما نكسر العملية لو فشلت)
+	_, auditErr := tx.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
 		VALUES (gen_random_uuid(), $1, $2, 'CLOSE_SHIFT', 'SHIFT', $3, 'Shift closed')
 	`, shift.ManagerID, "BRANCH_MANAGER", shift.ID)
-	if err != nil {
-		return nil, fmt.Errorf("audit log: %w", err)
+	if auditErr != nil {
+		log.Printf("[audit] failed to log CLOSE_SHIFT: %v", auditErr)
 	}
 
+	// 3. Commit الـ Transaction
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
+	// 4. إرجاع الوردية بعد التحديث
 	now := time.Now().UTC()
 	shift.Status = "CLOSED"
 	shift.ClosedAt = &now
