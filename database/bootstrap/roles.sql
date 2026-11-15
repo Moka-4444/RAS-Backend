@@ -1,3 +1,13 @@
+\getenv auth_password AUTH_DB_PASSWORD
+\getenv branch_password BRANCH_DB_PASSWORD
+\getenv attendance_password ATTENDANCE_DB_PASSWORD
+\getenv menu_password MENU_DB_PASSWORD
+\getenv inventory_password INVENTORY_DB_PASSWORD
+\getenv central_kitchen_password CENTRAL_KITCHEN_DB_PASSWORD
+\getenv cost_password COST_DB_PASSWORD
+\getenv sales_password SALES_DB_PASSWORD
+\getenv transfer_password TRANSFER_DB_PASSWORD
+
 SELECT format('CREATE ROLE auth_app LOGIN PASSWORD %L', :'auth_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_app')
 \gexec
@@ -56,3 +66,12 @@ ALTER ROLE transfer_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPA
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO auth_app, branch_app, attendance_app, menu_app, inventory_app, central_kitchen_app, cost_app, sales_app, transfer_app;
 GRANT CONNECT ON DATABASE restaurant_db TO auth_app, branch_app, attendance_app, menu_app, inventory_app, central_kitchen_app, cost_app, sales_app, transfer_app;
+
+DO $$
+BEGIN
+  IF (SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('auth_app', 'branch_app', 'attendance_app', 'menu_app', 'inventory_app', 'central_kitchen_app', 'cost_app', 'sales_app', 'transfer_app')) <> 9 THEN
+    RAISE EXCEPTION 'Runtime role bootstrap did not create all 9 expected roles';
+  END IF;
+END
+$$;
+

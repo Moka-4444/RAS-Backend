@@ -42,8 +42,8 @@ services:
       TRANSFER_DB_PASSWORD: ${TRANSFER_DB_PASSWORD:?Set TRANSFER_DB_PASSWORD in .env}
     volumes:
       - ../database/bootstrap/roles.sql:/bootstrap/roles.sql:ro
-      - ../database/bootstrap/roles.sh:/bootstrap/roles.sh:ro
-    entrypoint: ["/bin/sh", "/bootstrap/roles.sh"]
+    entrypoint: ["psql"]
+    command: ["-v", "ON_ERROR_STOP=1", "-f", "/bootstrap/roles.sql"]
     restart: "no"
 
   migrate:

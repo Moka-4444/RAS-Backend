@@ -65,12 +65,12 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 ### TF-008 — Role bootstrap passed literal environment placeholders to psql
 
 - **Test type:** Combined Docker Compose build and runtime smoke across all APIs.
-- **Symptom:** The next combined run passed the initial API health dependency step but failed migration with `role "central_kitchen_app" does not exist`.
-- **Cause:** The role-bootstrap container exited successfully without evidence that its expected roles existed; the prior test treated process completion as proof of bootstrap success.
-- **Fix:** Moved credential handling into a mounted `roles.sh` script and added an explicit count check for all nine runtime roles. The script exits nonzero if any role is missing, which prevents dependent migrations from starting.
-- **Why this fix:** A first-class script avoids ambiguity in Compose's `entrypoint`/`command` argument handling. The role count makes the startup prerequisite observable and fail-fast.
-- **Retest:** Pending the next combined CI run; the previous run failed during migration before health endpoint checks.
-- **Prevention:** Keep startup dependencies backed by explicit postcondition checks; a successful process exit alone does not prove required database state exists.
+- **Symptom:** The next combined run failed the new role-bootstrap invocation with exit code 127 before migration could start.
+- **Cause:** Adding a mounted shell wrapper introduced another command-resolution boundary and still left credentials dependent on command/entrypoint behavior.
+- **Fix:** Removed the wrapper. The shared psql bootstrap file now reads all nine passwords directly from its process environment using psql `\\getenv` commands, and it raises an error unless all expected roles exist. Both Compose and the fresh-database workflow use the same direct `psql -f roles.sql` path.
+- **Why this fix:** psql itself handles environment-to-variable transfer, so no shell interpolation or argument forwarding is needed. The role postcondition makes silent bootstrap success impossible.
+- **Retest:** Pending the next combined CI run.
+- **Prevention:** Keep database bootstrap behavior identical between CI and Compose, and validate the resulting role state inside the bootstrap transaction/path before allowing dependent migrations to run.
 
 ### TF-003 — Integrated feature modules failed the combined Go suite
 
