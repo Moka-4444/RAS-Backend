@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -314,6 +315,15 @@ func (s *Service) ApproveSupplyRequest(ctx context.Context, in ApproveSupplyRequ
 	}
 	req.Status = "APPROVED"
 
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'APPROVE', 'SUPPLY_REQUEST', $3, 'Supply request approved')
+	`, req.CreatedBy, in.ActorRole, req.ID)
+	if auditErr != nil {
+		log.Printf("[audit] failed to log APPROVE: %v", auditErr)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -358,6 +368,15 @@ func (s *Service) RejectSupplyRequest(ctx context.Context, in RejectSupplyReques
 	req.Notes = &in.Reason
 	if _, err := tx.ExecContext(ctx, `UPDATE supply_requests SET notes = $2 WHERE id = $1`, req.ID, in.Reason); err != nil {
 		return nil, err
+	}
+
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'REJECT', 'SUPPLY_REQUEST', $3, $4)
+	`, req.CreatedBy, in.ActorRole, req.ID, in.Reason)
+	if auditErr != nil {
+		log.Printf("[audit] failed to log REJECT: %v", auditErr)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -428,6 +447,16 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorRole, requestID st
 	if err := s.repo.UpdateSupplyRequestStatus(ctx, tx, req.ID, "SHIPPED"); err != nil {
 		return err
 	}
+
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'SHIP', 'SUPPLY_REQUEST', $3, 'Supply request shipped')
+	`, "99999999-9999-9999-9999-999999999999", actorRole, req.ID)
+	if auditErr != nil {
+		log.Printf("[audit] failed to log SHIP: %v", auditErr)
+	}
+
 	return tx.Commit()
 }
 
@@ -521,5 +550,15 @@ func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequ
 	if err := s.repo.UpdateSupplyRequestStatus(ctx, tx, req.ID, "FULFILLED"); err != nil {
 		return err
 	}
+
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'RECEIVE', 'SUPPLY_REQUEST', $3, 'Supply request received')
+	`, req.CreatedBy, in.ActorRole, req.ID)
+	if auditErr != nil {
+		log.Printf("[audit] failed to log RECEIVE: %v", auditErr)
+	}
+
 	return tx.Commit()
 }
