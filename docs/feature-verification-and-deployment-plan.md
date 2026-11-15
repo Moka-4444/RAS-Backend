@@ -1,6 +1,6 @@
 # Feature Verification and Deployment Plan
 
-Status: proposed execution plan  
+Status: proposed execution plan
 Prepared: 2026-11-15
 
 ## Execution ledger
@@ -13,13 +13,15 @@ Prepared: 2026-11-15
 - [x] GitHub fresh-database migration validation passed for the new shared feature schema.
 - [x] GitHub full Compose build, startup, and health checks for all nine APIs passed on candidate `e8f23637d447a9a0a25839f3f0a82dd58f851e50` (run `43733645153`).
 - [x] Runtime-role bootstrap, shared migrations, and service health checks passed on a clean disposable PostgreSQL database.
-- [ ] Feature API/database contract matrix and compatibility review for every new service.
+- [ ] Feature API/database contract matrix and authenticated business-flow compatibility review for every new service.
 - [x] Add deployment definitions for Inventory, Transfer, Sales, Cost, and Central Kitchen Supply.
-- [ ] Run full-stack feature flows against PostgreSQL for all services.
+- [ ] Run authenticated full-stack feature flows against PostgreSQL for all services; the passing smoke proves startup, migrations, role bootstrap, and health only.
 - [ ] Update CI/reporting to preserve consolidated logs and all bug metadata for the integrated suite.
-- [ ] Final branch report and merge to `main` (all applicable CI gates are green; PR #24 is ready to merge).
+- [x] Final verification report and merge to `main`; PR #24 merged at `da849f4fafe3d8f38ee0783ce01acbd05a548ca3` after every applicable PR check passed.
+- [x] Integrated feature services and deployment definitions are present in GitHub `main`.
+- [ ] Cloud deployment: no cloud target/environment was selected or deployed in this task. Compose verification is not a cloud deployment.
 
-All nine services are wired into the deployment and pass clean-stack startup and health checks. Authenticated business-flow checks against each API and external mobile-app compatibility remain outside the health smoke and must not be counted as verified until executed.
+All nine services are wired into the deployment and pass clean-stack startup and health checks. Authenticated business-flow checks against each API, external mobile-app compatibility, and deployment to a cloud environment remain open and must not be counted as verified until executed.
 
 ## Goal
 
@@ -109,5 +111,6 @@ Also report passed checks and skipped checks with reasons. Separate confirmed de
 ## Execution order at a glance
 
 `Inventory branches → map features/contracts/schema → verify integrations → add missing tests → rerun and report → maintain Docker/Compose → full-stack smoke verification`
+
 
 
