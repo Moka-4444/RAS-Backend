@@ -65,12 +65,12 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 ### TF-008 — Role bootstrap passed literal environment placeholders to psql
 
 - **Test type:** Combined Docker Compose build and runtime smoke across all APIs.
-- **Symptom:** `central-kitchen-api` repeatedly failed database authentication; Compose then reported `auth-api` unhealthy because startup waited for the full dependency graph.
-- **Cause:** Changing the bootstrap entrypoint to `psql` fixed command invocation but also bypassed a shell. Compose's escaped `$$VAR` references therefore reached psql as literal `$VAR` strings instead of the configured passwords.
-- **Fix:** Run the bootstrap command through `/bin/sh -ec`, pass every password as a quoted psql variable, and `exec psql` so the container exits with psql's status.
-- **Why this fix:** It preserves Compose's required escaping of container environment references while ensuring expansion happens inside the container. Quoting keeps password values as single arguments.
-- **Retest:** Pending the next combined CI run; the previous run failed before API health verification completed.
-- **Prevention:** For Compose `$$` expressions, verify both stages: Compose must leave `$VAR` intact in the container command, and a shell must expand it before invoking the target program. Add an integration assertion for role login/passwords in the fresh database job.
+- **Symptom:** The next combined run passed the initial API health dependency step but failed migration with `role "central_kitchen_app" does not exist`.
+- **Cause:** The role-bootstrap container exited successfully without evidence that its expected roles existed; the prior test treated process completion as proof of bootstrap success.
+- **Fix:** Moved credential handling into a mounted `roles.sh` script and added an explicit count check for all nine runtime roles. The script exits nonzero if any role is missing, which prevents dependent migrations from starting.
+- **Why this fix:** A first-class script avoids ambiguity in Compose's `entrypoint`/`command` argument handling. The role count makes the startup prerequisite observable and fail-fast.
+- **Retest:** Pending the next combined CI run; the previous run failed during migration before health endpoint checks.
+- **Prevention:** Keep startup dependencies backed by explicit postcondition checks; a successful process exit alone does not prove required database state exists.
 
 ### TF-003 — Integrated feature modules failed the combined Go suite
 
@@ -89,4 +89,5 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Retest:** Compose image builds succeeded for Auth, Branch, Attendance, Menu, and the Goose migration runner. On an isolated smoke database, Goose migrations completed and all four API containers reported healthy; `/health` returned 200 on ports 9001, 9002, 9003, and 9005.
 - **Additional issue and handling:** Menu's Dockerfile used Go 1.23 despite its module requiring 1.27.2; updated the builder/runtime stages and rebuilt successfully. An initial smoke environment also had an occupied host port and mismatched development seed settings; used a separate smoke volume/port and production mode for the disposable health-only Auth check. Existing local database data was retained.
 - **Scope limitation:** Current Compose still does not include Inventory, Transfer, Sales, Cost, or Central Kitchen services. Their integration into deployment and feature-level DB flows remain open.
+
 
