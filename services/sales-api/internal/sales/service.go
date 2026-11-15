@@ -3,6 +3,7 @@ package sales
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -255,10 +256,18 @@ func (s *Service) CloseShift(ctx context.Context, in CloseShiftRequest) (*Shift,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// في الحقيقة هنا ممكن نضيف حسابات الخزنة والـ Expected Cash
-	// لكن دلوقتي هنقفلها ونغير حالتها بس
+	// 1. تحديث حالة الوردية
 	if err := s.repo.UpdateShiftStatus(ctx, tx, shift.ID, "CLOSED"); err != nil {
 		return nil, err
+	}
+
+	// 2. إضافة سجل في الـ Audit Log
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'CLOSE_SHIFT', 'SHIFT', $3, 'Shift closed')
+	`, shift.ManagerID, "BRANCH_MANAGER", shift.ID)
+	if err != nil {
+		return nil, fmt.Errorf("audit log: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
