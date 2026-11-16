@@ -19,9 +19,9 @@ Prepared: 2026-11-15
 - [ ] Update CI/reporting to preserve consolidated logs and all bug metadata for the integrated suite.
 - [x] Final verification report and merge to `main`; PR #24 merged at `da849f4fafe3d8f38ee0783ce01acbd05a548ca3` after every applicable PR check passed.
 - [x] Integrated feature services and deployment definitions are present in GitHub `main`.
-- [ ] Cloud deployment: the configured development target is AWS `eu-west-3`. The current S3 Terraform state does not include the EC2 host, RDS instance, API Gateway, or Lambdas, so the reviewed plan proposes creating the missing stack (57 resources, 1 in-place security-group update, 0 deletions). No apply has been run; the cloud rollout remains pending.
+- [ ] Cloud deployment: AWS `eu-west-3` deployment automation now includes all ten APIs, public and private health probes, automatic GitHub OIDC environment setup, endpoint reporting, and a disposable `ephemeral` command that destroys app resources, RDS data, and the state bucket after verification. Live deployment remains pending because the AWS credentials expired during the run.
 
-All nine services are wired into the GitHub/Compose deployment and pass clean-stack startup and health checks. Authenticated business-flow checks against each API and external mobile-app compatibility remain open. The AWS development rollout has a non-destructive plan but has not been applied.
+All ten services are wired into the GitHub/Compose deployment and pass clean-stack startup and health checks. Authenticated business-flow checks against each API and external mobile-app compatibility remain open. A live AWS endpoint run is pending valid AWS credentials.
 
 ## Goal
 

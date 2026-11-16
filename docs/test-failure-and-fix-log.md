@@ -186,3 +186,27 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Pin the workflow command to the published `@latest` dist-tag so npx cannot mistake `2.79.0` for a valid package version. No API schema changes were needed.
 - **Retest:** The follow-up PR OpenAPI CI run is required before marking this issue resolved.
 - **Prevention:** Pin CI tool dependencies to a validated exact version in a lockfile when possible; otherwise use a valid published dist-tag and ensure the main-branch run executes the same check as the PR.
+
+### TF-023 — Cloud deployment omitted Reports and exposed no public health probes
+
+- **Affected area:** AWS deployment script, API Gateway routes, request proxy, and endpoint smoke workflow.
+- **Environment/commit/date:** Code review of `main` deployment state; Windows PowerShell, AWS `eu-west-3`; 2026-11-16.
+- **Severity/status:** High; implementation and local checks pass, live AWS retest pending valid AWS credentials.
+- **Test type:** Deployment configuration review, gateway route unit test, Terraform validation, PowerShell syntax validation, endpoint smoke design.
+- **Symptom:** The local image/deploy script omitted the Reports image and service despite Reports being part of the ten-service Compose stack. The cloud proxy did not rewrite service health probes to root `/health` or `/healthz`, and `/api/v1/{proxy+}` was protected, so unauthenticated health probes would fail or reach nonexistent API routes.
+- **Cause:** Reports was integrated after the original cloud lifecycle script; public service health routing was not added alongside the gateway proxy.
+- **Fix:** Add Reports to Terraform host environment, the image build list, SSM deploy list, and GitHub rollout; add explicit public API Gateway health routes for all ten APIs; rewrite each public health path to its service's actual local health path; verify host and gateway endpoints and record each result.
+- **Retest:** Node request-proxy tests pass (4/4); Terraform validate passes; PowerShell parser passes. Live AWS endpoint retest is blocked by expired AWS profile credentials.
+- **Prevention:** Keep the service inventory shared across Compose, Terraform/ECR, local build/deploy, GitHub publishing, gateway routing, and endpoint smoke; run the gateway health matrix whenever adding a service.
+
+### TF-024 — Deleted state bucket prevented a fresh deployment
+
+- **Affected area:** Terraform backend bootstrap and disposable cloud lifecycle.
+- **Environment/commit/date:** AWS account `109573999710`, `eu-west-3`; 2026-11-16.
+- **Severity/status:** High; secure bucket bootstrap and teardown automation implemented; cloud retest pending valid AWS credentials.
+- **Test type:** AWS state-backend inventory and Terraform initialization diagnosis.
+- **Symptom:** Terraform initialization failed with `NoSuchBucket` after the state S3 bucket had been deleted; the existing lifecycle script assumed the bucket was already present and did not recreate it.
+- **Cause:** The backend is deliberately outside the Terraform stack, but there was no lifecycle code to create or remove it.
+- **Fix:** Create the account/region state bucket before Terraform initialization, enable all S3 public access blocks, versioning, and AES-256 encryption; after a successful ephemeral destroy, remove all object versions/delete markers and delete the bucket.
+- **Retest:** Bucket security controls were verified after bootstrap. Recovery state was loaded only to inspect the former inventory; Terraform refresh showed AWS had independently removed/replaced resources. Full clean-plan/apply/teardown retest is pending AWS reauthentication.
+- **Prevention:** Treat backend setup/cleanup as explicit lifecycle stages and verify the backend bucket exists and is protected before Terraform init.

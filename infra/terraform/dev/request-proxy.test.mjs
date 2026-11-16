@@ -9,6 +9,16 @@ test("routes known API paths to the service ports and forwards request data", as
 
   const cases = [
     ["/health", 9001, "/health"],
+    ["/api/v1/auth/health", 9001, "/health"],
+    ["/api/v1/branches/health", 9002, "/health"],
+    ["/api/v1/attendance/health", 9003, "/health"],
+    ["/api/v1/central-kitchen/health", 9004, "/health"],
+    ["/api/v1/menu/health", 9005, "/health"],
+    ["/api/v1/sales/health", 9006, "/health"],
+    ["/api/v1/cost/health", 9007, "/health"],
+    ["/api/v1/transfers/health", 9008, "/healthz"],
+    ["/api/v1/reports/health", 9009, "/health"],
+    ["/api/v1/stock/health", 9010, "/healthz"],
     ["/api/v1/auth/login", 9001, "/api/v1/auth/login"],
     ["/api/v1/users", 9001, "/api/v1/users"],
     ["/api/v1/branches/7", 9002, "/api/v1/branches/7"],

@@ -46,9 +46,19 @@ Set-Location C:\Users\myfin\OneDrive\Desktop\RAS-backend
 .\scripts\aws-dev.ps1 up
 ```
 
-The command initializes the documented S3 state key `ras-backend/dev/terraform.tfstate`, reviews Terraform, refuses plans containing resource deletion or replacement, builds and publishes immutable commit-tagged images for all nine APIs plus the migration runner, updates the EC2 deployment helper through SSM, runs role bootstrap and migrations once, deploys all nine APIs, and checks service and gateway health.
+The command initializes the S3 state key `ras-backend/dev/terraform.tfstate`, reviews Terraform, refuses plans containing resource deletion or replacement, builds and publishes immutable commit-tagged images for all ten APIs plus the migration runner, updates the EC2 deployment helper through SSM, runs role bootstrap and migrations once, deploys all ten APIs, and checks the private service and public gateway health endpoints.
 
-To terminate the disposable development environment:
+For a fully disposable end-to-end run, use:
+
+```powershell
+.\scripts\aws-dev.ps1 ephemeral
+```
+
+This builds and deploys all ten APIs, writes `docs/aws-cloud-deployment-report.md`, then destroys the complete application stack including RDS and its data. It also deletes every object version and the Terraform state S3 bucket after the destroy succeeds. The next run creates a fresh encrypted, versioned, private state bucket and starts with empty Terraform state. The report remains in the repository. **Do not use `ephemeral` when database data must be retained.**
+
+For continuous GitHub deployment, run `infra-up` once from an authenticated local AWS profile. It provisions the stack and sets `AWS_ROLE_TO_ASSUME`, `AWS_REGION`, and `API_GATEWAY_BASE_URL` in the GitHub `development-publish` environment. Successful Docker stack validation runs on `main` then publish immutable images and deploy through SSM. The deployment workflow records its endpoint report as a workflow artifact.
+
+To terminate the disposable development environment while retaining the S3 state bucket:
 
 ```powershell
 .\scripts\aws-dev.ps1 down

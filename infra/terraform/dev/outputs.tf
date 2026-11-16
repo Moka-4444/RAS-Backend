@@ -8,3 +8,5 @@ output "ecr_repository_urls" { value = module.application.ecr_repository_urls }
 output "application_instance_private_ip" { value = module.application.instance_private_ip }
 output "application_instance_public_ip" { value = module.application.instance_public_ip }
 output "github_actions_publish_role_arn" { value = aws_iam_role.github_actions_ecr_publish.arn }
+output "github_actions_aws_region" { value = var.aws_region }
+output "github_actions_api_gateway_base_url" { value = aws_apigatewayv2_stage.dev.invoke_url }

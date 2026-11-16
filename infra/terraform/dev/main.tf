@@ -1,6 +1,6 @@
 provider "aws" {
   region  = var.aws_region
-  profile = var.aws_profile
+  profile = var.aws_profile == "" ? null : var.aws_profile
   default_tags {
     tags = { Project = "RAS-backend", Environment = "development", ManagedBy = "Terraform" }
   }
@@ -67,7 +67,7 @@ module "application" {
   name                                    = "ras-backend"
   ami_id                                  = data.aws_ami.ubuntu.id
   instance_type                           = var.application_instance_type
-  public_subnet_id                        = module.network.public_subnet_ids[0]
+  public_subnet_id                        = try(module.network.public_subnet_ids[0], null)
   application_security_group_id           = module.network.application_security_group_id
   app_secret_parameter_name               = aws_ssm_parameter.application_secrets.name
   app_secret_parameter_arn                = aws_ssm_parameter.application_secrets.arn

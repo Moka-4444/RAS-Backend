@@ -123,7 +123,7 @@ resource "aws_apigatewayv2_integration" "lambda_proxy" {
   timeout_milliseconds   = 30000
 }
 resource "aws_apigatewayv2_route" "public_auth" {
-  for_each  = toset(["POST /api/v1/auth/login", "POST /api/v1/auth/refresh", "POST /api/v1/auth/logout", "OPTIONS /api/v1/auth/login", "OPTIONS /api/v1/auth/refresh", "OPTIONS /api/v1/auth/logout", "OPTIONS /api/v1/{proxy+}", "GET /health"])
+  for_each  = toset(["POST /api/v1/auth/login", "POST /api/v1/auth/refresh", "POST /api/v1/auth/logout", "OPTIONS /api/v1/auth/login", "OPTIONS /api/v1/auth/refresh", "OPTIONS /api/v1/auth/logout", "OPTIONS /api/v1/{proxy+}", "GET /health", "GET /api/v1/auth/health", "GET /api/v1/branches/health", "GET /api/v1/attendance/health", "GET /api/v1/central-kitchen/health", "GET /api/v1/menu/health", "GET /api/v1/sales/health", "GET /api/v1/cost/health", "GET /api/v1/transfers/health", "GET /api/v1/reports/health", "GET /api/v1/stock/health"])
   api_id    = aws_apigatewayv2_api.public.id
   route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.lambda_proxy.id}"

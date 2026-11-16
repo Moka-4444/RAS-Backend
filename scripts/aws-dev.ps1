@@ -1,10 +1,11 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('up', 'infra-up', 'down', 'down-preserve-data', 'shell-down')]
+    [ValidateSet('up', 'infra-up', 'ephemeral', 'down', 'down-preserve-data', 'shell-down')]
     [string]$Action,
-    [string]$Profile = 'terraform',
+    [string]$Profile = 'ras-backend-cloud',
     [string]$Region = 'eu-west-3',
-    [switch]$UsePublishedImages
+    [switch]$UsePublishedImages,
+    [switch]$AutoDestroy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,17 +30,37 @@ if ($secretFiles.Count -ne 1 -or -not (Test-Path -LiteralPath $secretFiles[0])) 
 }
 $secretFile = $secretFiles[0]
 $planPath = Join-Path $toolsDirectory "ras-backend-dev-$Action.tfplan"
+$tfvarsPath = Join-Path $terraformDirectory 'terraform.tfvars'
+if (Test-Path -LiteralPath $tfvarsPath) {
+    $tfvarsContent = Get-Content -Raw -LiteralPath $tfvarsPath
+    $tfvarsContent = [regex]::Replace($tfvarsContent, '(?m)^aws_profile\s*=.*$', 'aws_profile = ""')
+    [System.IO.File]::WriteAllText($tfvarsPath, $tfvarsContent, [System.Text.UTF8Encoding]::new($false))
+}
 
 function Invoke-Terraform {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    Set-AwsSessionEnvironment
     & $terraform "-chdir=$terraformDirectory" @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Terraform failed: $($Arguments -join ' ')" }
 }
 
 function Invoke-Aws {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    Set-AwsSessionEnvironment
     & aws @Arguments --profile $Profile --region $Region
     if ($LASTEXITCODE -ne 0) { throw "AWS CLI failed: aws $($Arguments -join ' ')" }
+}
+
+function Set-AwsSessionEnvironment {
+    $credentialOutput = & aws configure export-credentials --profile $Profile --format process
+    if ($LASTEXITCODE -ne 0) { throw "Could not refresh AWS credentials from profile '$Profile'." }
+    $session = ($credentialOutput | ConvertFrom-Json)
+    if (-not $session.AccessKeyId -or -not $session.SecretAccessKey -or -not $session.SessionToken) {
+        throw "AWS profile '$Profile' did not return a complete temporary credential session."
+    }
+    $env:AWS_ACCESS_KEY_ID = $session.AccessKeyId
+    $env:AWS_SECRET_ACCESS_KEY = $session.SecretAccessKey
+    $env:AWS_SESSION_TOKEN = $session.SessionToken
 }
 
 function Get-TerraformOutput {
@@ -49,10 +70,90 @@ function Get-TerraformOutput {
     return $value.Trim()
 }
 
-function New-ReviewedPlan {
+function Get-StateBucket {
     $accountId = Invoke-Aws sts get-caller-identity --query Account --output text
-    $stateBucket = "ras-backend-tfstate-$accountId-$Region"
-    $null = Invoke-Terraform init -input=false "-backend-config=bucket=$stateBucket" "-backend-config=key=ras-backend/dev/terraform.tfstate" "-backend-config=region=$Region" "-backend-config=profile=$Profile"
+    return "ras-backend-tfstate-$accountId-$Region"
+}
+
+function Remove-StateBucket {
+    param([string]$Bucket)
+    $versionsJson = Invoke-Aws s3api list-object-versions --bucket $Bucket --output json
+    $versions = $versionsJson | ConvertFrom-Json
+    foreach ($entry in @($versions.Versions) + @($versions.DeleteMarkers)) {
+        if ($entry -and $entry.Key -and $entry.VersionId) {
+            $null = Invoke-Aws s3api delete-object --bucket $Bucket --key $entry.Key --version-id $entry.VersionId
+        }
+    }
+    $null = Invoke-Aws s3api delete-bucket --bucket $Bucket
+}
+
+function Remove-OrphanedDevelopmentVpc {
+    $vpcOutput = Invoke-Aws ec2 describe-vpcs --filters 'Name=tag:Project,Values=RAS-backend' 'Name=tag:Name,Values=ras-backend-dev-vpc' --query 'Vpcs[].VpcId' --output text
+    foreach ($vpcId in @($vpcOutput -split '\s+' | Where-Object { $_ -match '^vpc-' })) {
+        $endpointJson = Invoke-Aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$vpcId" --query 'VpcEndpoints[].VpcEndpointId' --output text
+        $endpointIds = @($endpointJson -split '\s+' | Where-Object { $_ -match '^vpce-' })
+        if ($endpointIds.Count -gt 0) { $null = Invoke-Aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $endpointIds }
+        $natJson = Invoke-Aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpcId" 'Name=state,Values=pending,available,failed' --query 'NatGateways[].NatGatewayId' --output text
+        foreach ($natId in @($natJson -split '\s+' | Where-Object { $_ -match '^nat-' })) { $null = Invoke-Aws ec2 delete-nat-gateway --nat-gateway-id $natId }
+        $instancesJson = Invoke-Aws ec2 describe-instances --filters "Name=vpc-id,Values=$vpcId" 'Name=instance-state-name,Values=pending,running,stopping,stopped' --query 'Reservations[].Instances[].InstanceId' --output text
+        $instanceIds = @($instancesJson -split '\s+' | Where-Object { $_ -match '^i-' })
+        if ($instanceIds.Count -gt 0) {
+            $null = Invoke-Aws ec2 terminate-instances --instance-ids $instanceIds
+            $null = Invoke-Aws ec2 wait instance-terminated --instance-ids $instanceIds
+        }
+        $functionsJson = Invoke-Aws lambda list-functions --query 'Functions[?starts_with(FunctionName, `ras-backend-dev-`)].FunctionName' --output text
+        foreach ($functionName in @($functionsJson -split '\s+' | Where-Object { $_ })) { $null = Invoke-Aws lambda delete-function --function-name $functionName }
+        $eniJson = Invoke-Aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$vpcId" --query 'NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status}' --output json
+        foreach ($eni in @($eniJson | ConvertFrom-Json)) {
+            if ($eni.Status -eq 'available') { $null = Invoke-Aws ec2 delete-network-interface --network-interface-id $eni.Id }
+            else { throw "Cannot remove residual development VPC $vpcId while network interface $($eni.Id) remains $($eni.Status)." }
+        }
+        $subnetsJson = Invoke-Aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpcId" --query 'Subnets[].SubnetId' --output text
+        foreach ($subnetId in @($subnetsJson -split '\s+' | Where-Object { $_ -match '^subnet-' })) { $null = Invoke-Aws ec2 delete-subnet --subnet-id $subnetId }
+        $gatewaysJson = Invoke-Aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpcId" --query 'InternetGateways[].InternetGatewayId' --output text
+        foreach ($gatewayId in @($gatewaysJson -split '\s+' | Where-Object { $_ -match '^igw-' })) {
+            $null = Invoke-Aws ec2 detach-internet-gateway --internet-gateway-id $gatewayId --vpc-id $vpcId
+            $null = Invoke-Aws ec2 delete-internet-gateway --internet-gateway-id $gatewayId
+        }
+        $groupsJson = Invoke-Aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpcId" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text
+        $groupIds = @($groupsJson -split '\s+' | Where-Object { $_ -match '^sg-' })
+        foreach ($groupId in $groupIds) {
+            $rulesJson = Invoke-Aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$groupId" --query 'SecurityGroupRules[].{Id:SecurityGroupRuleId,Egress:IsEgress}' --output json
+            foreach ($rule in @($rulesJson | ConvertFrom-Json)) {
+                $action = if ($rule.Egress) { 'revoke-security-group-egress' } else { 'revoke-security-group-ingress' }
+                $null = Invoke-Aws ec2 $action --group-id $groupId --security-group-rule-ids $rule.Id
+            }
+        }
+        foreach ($groupId in $groupIds) { $null = Invoke-Aws ec2 delete-security-group --group-id $groupId }
+        $routeJson = Invoke-Aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpcId" --query 'RouteTables[?Associations[?Main!=`true`]].RouteTableId' --output text
+        foreach ($routeId in @($routeJson -split '\s+' | Where-Object { $_ -match '^rtb-' })) {
+            $associationJson = Invoke-Aws ec2 describe-route-tables --route-table-ids $routeId --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text
+            foreach ($associationId in @($associationJson -split '\s+' | Where-Object { $_ -match '^rtbassoc-' })) { $null = Invoke-Aws ec2 disassociate-route-table --association-id $associationId }
+            $null = Invoke-Aws ec2 delete-route-table --route-table-id $routeId
+        }
+        $null = Invoke-Aws ec2 delete-vpc --vpc-id $vpcId
+    }
+}
+
+function New-ReviewedPlan {
+    $stateBucket = Get-StateBucket
+    $bucketExists = $true
+    try { $null = Invoke-Aws s3api head-bucket --bucket $stateBucket }
+    catch { $bucketExists = $false }
+    if (-not $bucketExists) {
+        $location = if ($Region -eq 'us-east-1') { @{} } else { @{ LocationConstraint = $Region } }
+        $locationJson = $location | ConvertTo-Json -Compress
+        $requestPath = Join-Path $env:TEMP ("ras-state-bucket-" + [guid]::NewGuid().ToString('N') + '.json')
+        [System.IO.File]::WriteAllText($requestPath, $locationJson, [System.Text.UTF8Encoding]::new($false))
+        try { $null = Invoke-Aws s3api create-bucket --bucket $stateBucket --create-bucket-configuration "file://$requestPath" }
+        finally { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
+        $null = Invoke-Aws s3api put-public-access-block --bucket $stateBucket --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+        $null = Invoke-Aws s3api put-bucket-versioning --bucket $stateBucket --versioning-configuration Status=Enabled
+        $null = Invoke-Aws s3api put-bucket-encryption --bucket $stateBucket --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+        $null = Invoke-Aws s3api put-bucket-tagging --bucket $stateBucket --tagging "TagSet=[{Key=Project,Value=RAS-backend},{Key=Purpose,Value=terraform-state},{Key=Environment,Value=development}]"
+        Start-Sleep -Seconds 3
+    }
+    $null = Invoke-Terraform init -input=false "-backend-config=bucket=$stateBucket" "-backend-config=key=ras-backend/dev/terraform.tfstate" "-backend-config=region=$Region"
     if ($Action -eq 'down') {
         $null = Invoke-Terraform plan -destroy -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=protect_database=false" "-out=$planPath"
     } elseif ($Action -eq 'down-preserve-data') {
@@ -159,6 +260,7 @@ function Sync-HostDeploymentHelper {
         "COST_IMAGE_REPOSITORY=$($repositories['ras-cost-api'])",
         "SALES_IMAGE_REPOSITORY=$($repositories['ras-sales-api'])",
         "TRANSFER_IMAGE_REPOSITORY=$($repositories['ras-transfer-api'])",
+        "REPORTS_IMAGE_REPOSITORY=$($repositories['ras-reports-api'])",
         "MIGRATION_IMAGE_REPOSITORY=$($repositories['ras-db-migrations'])"
     ) -join "`n"
     $deployScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'deploy\aws-dev-deploy.sh')
@@ -174,6 +276,17 @@ if ($Action -in @('up', 'infra-up')) {
     if ($dirty.Count -gt 0) { throw 'Commit or merge backend, migration, deployment, and Terraform changes before using this repeatable deploy command.' }
     $imageTag = (git -C $repoRoot rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $imageTag -notmatch '^[a-f0-9]{40}$') { throw 'Could not determine the source commit SHA.' }
+    $secretsRaw = Get-Content -Raw -LiteralPath $secretFile
+    $appSecretsEncoded = [regex]::Match($secretsRaw, '(?m)^app_secret_json\s*=\s*(.+)$').Groups[1].Value.Trim()
+    if (-not $appSecretsEncoded) { throw 'The secrets tfvars file has no app_secret_json value.' }
+    $appSecrets = ConvertFrom-Json (ConvertFrom-Json $appSecretsEncoded)
+    if (-not $appSecrets.REPORTS_DB_PASSWORD) {
+        $appSecrets | Add-Member -NotePropertyName REPORTS_DB_PASSWORD -NotePropertyValue ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
+        $appJson = ConvertTo-Json -InputObject $appSecrets -Compress
+        $masterPassword = [regex]::Match($secretsRaw, '(?m)^database_master_password\s*=\s*(.+)$').Groups[1].Value
+        $secretText = "database_master_password = $masterPassword`napp_secret_json = $(ConvertTo-Json -InputObject $appJson -Compress)`n"
+        [System.IO.File]::WriteAllText($secretFile, $secretText, [System.Text.UTF8Encoding]::new($false))
+    }
 }
 
 if ($Action -eq 'infra-up') {
@@ -182,7 +295,23 @@ if ($Action -eq 'infra-up') {
         Write-Output 'Applying the reviewed non-destructive development infrastructure plan.'
         Invoke-Terraform apply -input=false -auto-approve $planPath
     } else { Write-Output 'Infrastructure is already current.' }
+    $environmentName = 'development-publish'
+    $roleArn = Get-TerraformOutput 'github_actions_publish_role_arn'
+    $regionValue = Get-TerraformOutput 'github_actions_aws_region'
+    $gatewayBaseUrl = Get-TerraformOutput 'github_actions_api_gateway_base_url'
+    $null = gh auth refresh -s repo,workflow
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI needs repo/workflow administration authorization to configure OIDC deployment.' }
+    $environmentUri = "repos/NorthstarEngineering/RAS-Backend/environments/$environmentName"
+    $null = gh api --method PUT $environmentUri --field wait_timer=0 --field can_admins_bypass=false
+    if ($LASTEXITCODE -ne 0) { throw "Could not create/configure GitHub environment $environmentName." }
+    gh variable set AWS_ROLE_TO_ASSUME --repo NorthstarEngineering/RAS-Backend --env $environmentName --body $roleArn
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set AWS_ROLE_TO_ASSUME in GitHub Actions environment.' }
+    gh variable set AWS_REGION --repo NorthstarEngineering/RAS-Backend --env $environmentName --body $regionValue
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set AWS_REGION in GitHub Actions environment.' }
+    gh variable set API_GATEWAY_BASE_URL --repo NorthstarEngineering/RAS-Backend --env $environmentName --body $gatewayBaseUrl
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set API_GATEWAY_BASE_URL in GitHub Actions environment.' }
     Write-Output 'Infrastructure is ready. Publish images with the Docker stack workflow, then run aws-dev.ps1 up -UsePublishedImages.'
+    Write-Output "GitHub Actions environment '$environmentName' has been configured for OIDC publishing and deployment."
     exit 0
 }
 
@@ -211,6 +340,7 @@ if ($Action -eq 'up') {
         @{ Name = 'ras-cost-api'; Context = 'services\cost-api'; Dockerfile = 'services\cost-api\Dockerfile' },
         @{ Name = 'ras-sales-api'; Context = 'services\sales-api'; Dockerfile = 'services\sales-api\Dockerfile' },
         @{ Name = 'ras-transfer-api'; Context = 'services\transfer-api'; Dockerfile = 'services\transfer-api\Dockerfile' },
+        @{ Name = 'ras-reports-api'; Context = 'services\reports-api'; Dockerfile = 'services\reports-api\Dockerfile' },
         @{ Name = 'ras-db-migrations'; Context = '.'; Dockerfile = 'database\Dockerfile' }
     )
     if ($UsePublishedImages) {
@@ -245,14 +375,109 @@ if ($Action -eq 'up') {
     Sync-HostDeploymentHelper $instanceId
     Invoke-Ssm $instanceId 'sudo /usr/local/bin/ras-host-doctor.sh'
     Invoke-Ssm $instanceId "sudo /usr/local/bin/ras-backend-deploy.sh migrate $imageTag"
-    foreach ($service in @('auth-api', 'branch-api', 'attendance-api', 'menu-api', 'central-kitchen-api', 'inventory-api', 'cost-api', 'sales-api', 'transfer-api')) {
+    foreach ($service in @('auth-api', 'branch-api', 'attendance-api', 'menu-api', 'central-kitchen-api', 'inventory-api', 'cost-api', 'sales-api', 'transfer-api', 'reports-api')) {
         Invoke-Ssm $instanceId "sudo /usr/local/bin/ras-backend-deploy.sh $service $imageTag"
     }
+    $endpointChecks = @(
+        @{ Name = 'gateway/auth'; Path = '/health'; Port = 9001; LocalPath = '/health' },
+        @{ Name = 'auth'; Path = '/api/v1/auth/health'; Port = 9001; LocalPath = '/health' },
+        @{ Name = 'branch'; Path = '/api/v1/branches/health'; Port = 9002; LocalPath = '/health' },
+        @{ Name = 'attendance'; Path = '/api/v1/attendance/health'; Port = 9003; LocalPath = '/health' },
+        @{ Name = 'central-kitchen'; Path = '/api/v1/central-kitchen/health'; Port = 9004; LocalPath = '/health' },
+        @{ Name = 'menu'; Path = '/api/v1/menu/health'; Port = 9005; LocalPath = '/health' },
+        @{ Name = 'inventory'; Path = '/api/v1/stock/health'; Port = 9010; LocalPath = '/healthz' },
+        @{ Name = 'sales'; Path = '/api/v1/sales/health'; Port = 9006; LocalPath = '/health' },
+        @{ Name = 'cost'; Path = '/api/v1/cost/health'; Port = 9007; LocalPath = '/health' },
+        @{ Name = 'transfer'; Path = '/api/v1/transfers/health'; Port = 9008; LocalPath = '/healthz' },
+        @{ Name = 'reports'; Path = '/api/v1/reports/health'; Port = 9009; LocalPath = '/health' }
+    )
+    $endpointResults = @()
+    foreach ($check in $endpointChecks) {
+        $isGatewayHealth = $check.Name -eq 'gateway/auth'
+        $uri = if ($isGatewayHealth) { "$gatewayUrl$($check.Path)" } else { "$gatewayUrl$($check.Path)$($check.LocalPath)" }
+        $targetUri = "http://127.0.0.1:$($check.Port)$($check.LocalPath)"
+        if (-not $isGatewayHealth) {
+            try {
+                Invoke-Ssm $instanceId "curl --fail --silent --show-error --max-time 10 '$targetUri' >/dev/null"
+                $endpointResults += [pscustomobject]@{ Name = "$($check.Name)/host"; Path = $check.LocalPath; Status = 200; Result = 'PASS' }
+            } catch {
+                $endpointResults += [pscustomobject]@{ Name = "$($check.Name)/host"; Path = $check.LocalPath; Status = 0; Result = 'FAIL' }
+            }
+        }
+        try {
+            $response = Invoke-WebRequest -Uri $uri -TimeoutSec 25 -UseBasicParsing
+            $endpointResults += [pscustomobject]@{ Name = $check.Name; Path = $check.Path; Status = [int]$response.StatusCode; Result = if ([int]$response.StatusCode -eq 200) { 'PASS' } else { 'FAIL' } }
+        } catch {
+            $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+            $endpointResults += [pscustomobject]@{ Name = $check.Name; Path = $check.Path; Status = $status; Result = 'FAIL' }
+        }
+    }
+    $endpointResults | Format-Table -AutoSize | Out-String | Write-Output
+    $failedEndpoints = @($endpointResults | Where-Object Result -ne 'PASS')
+    $reportPath = Join-Path $repoRoot 'docs\aws-cloud-deployment-report.md'
+    $reportLines = @(
+        '# AWS Cloud Deployment and Endpoint Verification',
+        '',
+        "- Run time (UTC): $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+        "- Source commit: $imageTag",
+        "- Region: $Region",
+        "- API Gateway: $gatewayUrl",
+        '- Deployment test type: immutable Docker image publish, SSM migration/deployment, private and public HTTP health smoke.',
+        '',
+        '| Endpoint | HTTP | Result |',
+        '|---|---:|---|'
+    )
+    $reportLines += @($endpointResults | ForEach-Object { "| $($_.Name) ($($_.Path)) | $($_.Status) | $($_.Result) |" })
+    [System.IO.File]::WriteAllLines($reportPath, $reportLines, [System.Text.UTF8Encoding]::new($false))
+    if ($failedEndpoints.Count -gt 0) {
+        Add-Content -LiteralPath $reportPath -Value "`nResult: FAIL. Endpoint verification failed; see the failed rows above."
+        $failedNames = $failedEndpoints | ForEach-Object { "$($_.Name) ($($_.Path)): HTTP $($_.Status)" }
+        throw "Development deploy endpoint checks failed: $($failedNames -join '; ')"
+    }
+    Add-Content -LiteralPath $reportPath -Value "`nResult: PASS. All private service and public gateway health endpoints returned HTTP 200."
+    Write-Output "Development APIs are available at $gatewayUrl; endpoint report: $reportPath"
+}
+elseif ($Action -eq 'ephemeral') {
+    $reportPath = Join-Path $repoRoot 'docs\aws-cloud-deployment-report.md'
+    $deployOutcome = 'FAIL'
+    $deployError = $null
+    $destroyOutcome = 'FAIL'
     try {
-        $health = Invoke-WebRequest -Uri "$gatewayUrl/health" -TimeoutSec 25 -UseBasicParsing
-        if ([int]$health.StatusCode -ne 200) { throw "Gateway health returned HTTP $([int]$health.StatusCode)." }
-    } catch { throw "Development deployment finished, but API Gateway health verification failed: $($_.Exception.Message)" }
-    Write-Output "Development APIs are available at $gatewayUrl"
+        & $PSCommandPath -Action down -Profile $Profile -Region $Region -AutoDestroy
+        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Initial cleanup exited with code $LASTEXITCODE." }
+        Remove-OrphanedDevelopmentVpc
+        Remove-StateBucket (Get-StateBucket)
+        Remove-Item -LiteralPath (Join-Path $toolsDirectory 'ras-backend-dev-down.tfplan') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'RAS-Backend\terraform-state-backups\*.state.dpapi') -Force -ErrorAction SilentlyContinue
+        $upArguments = @('-Action', 'up', '-Profile', $Profile, '-Region', $Region)
+        if ($UsePublishedImages) { $upArguments += '-UsePublishedImages' }
+        & $PSCommandPath @upArguments
+        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Deployment command exited with code $LASTEXITCODE." }
+        $deployOutcome = 'PASS'
+    } catch {
+        $deployError = $_.Exception.Message
+    } finally {
+        try {
+            & $PSCommandPath -Action down -Profile $Profile -Region $Region -AutoDestroy
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Teardown command exited with code $LASTEXITCODE." }
+            $destroyOutcome = 'PASS'
+            $bucket = Get-StateBucket
+            Remove-OrphanedDevelopmentVpc
+            Remove-StateBucket $bucket
+            Remove-Item -LiteralPath (Join-Path $toolsDirectory 'ras-backend-dev-down.tfplan') -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'RAS-Backend\terraform-state-backups\*.state.dpapi') -Force -ErrorAction SilentlyContinue
+        } catch {
+            $destroyOutcome = "FAIL: $($_.Exception.Message)"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $reportPath)) {
+        [System.IO.File]::WriteAllText($reportPath, "# AWS Cloud Deployment and Endpoint Verification`n`nNo endpoint run completed.`n", [System.Text.UTF8Encoding]::new($false))
+    }
+    Add-Content -LiteralPath $reportPath -Value "`n## Ephemeral lifecycle`n`n- Deployment: $deployOutcome`n- Teardown, including RDS data and versioned S3 state bucket: $destroyOutcome`n"
+    if ($deployError) { Add-Content -LiteralPath $reportPath -Value "- Deployment error: $deployError`n" }
+    if ($destroyOutcome -ne 'PASS') { throw "Cloud teardown did not complete: $destroyOutcome. Inspect the Terraform state bucket and rerun cleanup after AWS authentication is restored." }
+    if ($deployOutcome -ne 'PASS') { throw "Cloud deployment failed and the cloud stack was destroyed. Details are in $reportPath. $deployError" }
+    Write-Output "Ephemeral cloud deployment, endpoint smoke, report, and full AWS teardown completed: $reportPath"
 }
 elseif ($Action -eq 'shell-down') {
     $changes = New-ReviewedPlan
@@ -274,7 +499,8 @@ elseif ($Action -eq 'down-preserve-data') {
     Write-Output 'Disposable application infrastructure destroyed. RDS data and required networking were retained.'
 }
 else {
-    Invoke-Terraform init -input=false
+    $stateBucket = Get-StateBucket
+    Invoke-Terraform init -input=false "-backend-config=bucket=$stateBucket" "-backend-config=key=ras-backend/dev/terraform.tfstate" "-backend-config=region=$Region"
     $state = (& $terraform "-chdir=$terraformDirectory" state pull | Out-String)
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($state)) { throw 'Could not back up remote Terraform state; refusing teardown.' }
     $null = $state | ConvertFrom-Json -ErrorAction Stop
@@ -295,7 +521,7 @@ else {
     $addresses = @($changes | ForEach-Object address)
     Write-Output "The following AWS resources will be destroyed: $($addresses -join ', ')"
     Write-Warning 'This deletes the development RDS database and its data. The separately managed, versioned Terraform state S3 bucket is retained.'
-    $confirmation = Read-Host 'Type DELETE RAS BACKEND DEV DATA to continue'
+    $confirmation = if ($AutoDestroy) { 'DELETE RAS BACKEND DEV DATA' } else { Read-Host 'Type DELETE RAS BACKEND DEV DATA to continue' }
     if ($confirmation -cne 'DELETE RAS BACKEND DEV DATA') { throw 'Teardown cancelled; no resources were destroyed.' }
     Invoke-Terraform apply -input=false -auto-approve $planPath
     Write-Output 'Development infrastructure destroyed. Terraform state bucket and encrypted laptop backup remain.'
