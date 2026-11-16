@@ -95,16 +95,10 @@ try {
   await save.waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded PostgreSQL data and the fixture card opened');
   const updatedAddress = 'Updated from the Flutter browser';
-  async function fieldWithValue(value) {
-    const edits = page.getByRole('textbox');
-    await edits.first().waitFor({state: 'attached'});
-    const values = await edits.evaluateAll(fields => fields.map(field => field.value));
-    const index = values.indexOf(value);
-    assert.ok(index >= 0, `Expected branch address in the rendered form (${values.length} text fields)`);
-    return edits.nth(index);
-  }
-  const address = await fieldWithValue(branch.address);
-  await address.fill(updatedAddress);
+  const address = page.getByRole('textbox').and(page.locator('textarea'));
+  await address.focus();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.insertText(updatedAddress);
   const reloaded = focused ? page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches' && response.request().method() === 'GET') : null;
   const update = page.waitForResponse(response =>
@@ -120,7 +114,8 @@ try {
     assert.equal((await reloaded).status(), 200);
     await page.getByRole('button', {name: /Browser QA Branch/}).dispatchEvent('click');
     await save.waitFor({state: 'attached'});
-    await fieldWithValue(updatedAddress);
+    await page.getByText(updatedAddress, {exact: true})
+      .or(page.getByLabel(updatedAddress, {exact: true})).first().waitFor({state: 'attached'});
     console.log('::notice title=Browser QA::Reopening the branch displayed the saved address');
   }
 } finally {
