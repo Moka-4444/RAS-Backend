@@ -24,9 +24,17 @@ async function api(path, body, token) {
   return response.json();
 }
 
-// These credentials were rotated by the preceding disposable backend smoke test.
+const focused = process.env.BRANCH_QA_FOCUSED === 'true';
 const password = env.SEED_CEO_PASSWORD + 'A9';
-const session = await api('/auth/login', {email: env.SEED_CEO_EMAIL, password});
+let session;
+if (focused) {
+  const initial = await api('/auth/login', {email: env.SEED_CEO_EMAIL, password: env.SEED_CEO_PASSWORD});
+  session = await api('/auth/change-password', {
+    current_password: env.SEED_CEO_PASSWORD, new_password: password,
+  }, initial.access_token);
+} else {
+  session = await api('/auth/login', {email: env.SEED_CEO_EMAIL, password});
+}
 const branch = await api('/branches', {
   name: 'Browser QA Branch', type: 'branch', address: 'Disposable browser test',
   official_start_time: '09:00', late_rate: 0,
@@ -37,20 +45,40 @@ const browser = await chromium.launch({channel: 'chrome'});
 try {
   const page = await browser.newPage({viewport: {width: 500, height: 900}});
   page.setDefaultTimeout(25000);
-  await page.goto(base + '/#/login');
-  const semantics = page.locator('flt-semantics-placeholder');
-  await page.locator('flutter-view').waitFor({state: 'attached'});
-  if (await semantics.count()) await semantics.first().dispatchEvent('click');
-
-  const fields = page.getByRole('textbox');
-  await fields.first().fill(env.SEED_CEO_EMAIL);
-  await fields.nth(1).fill(password);
-  const loginResponse = page.waitForResponse(response =>
-    response.url() === base + '/api/v1/auth/login' && response.request().method() === 'POST');
-  await page.getByRole('button', {name: 'تسجيل الدخول للجهاز'}).dispatchEvent('click');
-  assert.equal((await loginResponse).status(), 200);
+  async function enableSemantics() {
+    await page.locator('flutter-view').waitFor({state: 'attached'});
+    const placeholder = page.locator('flt-semantics-placeholder');
+    if (await placeholder.count()) await placeholder.first().dispatchEvent('click');
+  }
+  if (focused) {
+    const user = session.user;
+    await page.addInitScript(({origin, values}) => {
+      if (location.origin !== origin) return;
+      for (const [key, value] of Object.entries(values)) {
+        localStorage.setItem('flutter.session.' + key, JSON.stringify(value));
+      }
+    }, {
+      origin: base,
+      values: {
+        id: user.id, name: user.name, email: user.email, role: user.role,
+        token: session.access_token, refreshToken: session.refresh_token,
+        branchId: '', branchName: '', mustChangePassword: 'false',
+      },
+    });
+    await page.goto(base + '/#/splash');
+  } else {
+    await page.goto(base + '/#/login');
+    await enableSemantics();
+    const fields = page.getByRole('textbox');
+    await fields.first().fill(env.SEED_CEO_EMAIL);
+    await fields.nth(1).fill(password);
+    const loginResponse = page.waitForResponse(response =>
+      response.url() === base + '/api/v1/auth/login' && response.request().method() === 'POST');
+    await page.getByRole('button', {name: 'تسجيل الدخول للجهاز'}).dispatchEvent('click');
+    assert.equal((await loginResponse).status(), 200);
+  }
   await page.waitForURL('**/#/home');
-  console.log('::notice title=Browser QA::Login button reached the live backend and opened home');
+  await enableSemantics();
 
   const branchResponse = page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches' && response.request().method() === 'GET');
@@ -64,7 +92,11 @@ try {
   await save.waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded PostgreSQL data and the fixture card opened');
   const updatedAddress = 'Updated from the Flutter browser';
-  await page.getByRole('textbox', {name: 'العنوان', exact: true}).fill(updatedAddress);
+  const address = page.getByRole('textbox', {name: 'العنوان', exact: true});
+  assert.equal(await address.inputValue(), branch.address, 'The address field must open with the original address');
+  await address.fill(updatedAddress);
+  const reloaded = focused ? page.waitForResponse(response =>
+    response.url() === base + '/api/v1/branches' && response.request().method() === 'GET') : null;
   const update = page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches/' + branch.id && response.request().method() === 'PATCH');
   await save.dispatchEvent('click');
@@ -74,6 +106,12 @@ try {
   const saved = await api('/branches/' + branch.id, null, session.access_token);
   assert.equal(saved.address, updatedAddress, 'The live database must return the new address');
   console.log('::notice title=Browser QA::Save branch button persisted the updated address');
+  if (reloaded) {
+    assert.equal((await reloaded).status(), 200);
+    await page.getByRole('button', {name: /Browser QA Branch/}).dispatchEvent('click');
+    assert.equal(await address.inputValue(), updatedAddress, 'Reopening the branch must show the new database value');
+    console.log('::notice title=Browser QA::Reopening the branch displayed the saved address');
+  }
 } finally {
   await browser.close();
 }

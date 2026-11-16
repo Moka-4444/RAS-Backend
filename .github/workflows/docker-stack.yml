@@ -11,7 +11,7 @@ on:
       - '.env.example'
       - '.github/workflows/docker-stack.yml'
   push:
-    branches: [main, codex/backend-qa-recheck]
+    branches: [main, codex/backend-qa-recheck, codex/branch-save-live]
     paths:
       - 'deploy/**'
       - 'database/**'
@@ -28,6 +28,8 @@ permissions:
 jobs:
   compose-build-and-smoke:
     runs-on: ubuntu-24.04
+    env:
+      BRANCH_QA_FOCUSED: ${{ github.repository == 'Moka-4444/RAS-Backend' && github.ref_name == 'codex/branch-save-live' }}
     steps:
       - uses: actions/checkout@v4
       - name: Configure disposable smoke credentials
@@ -58,11 +60,16 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose --env-file .env -f deploy/docker-compose.yml config --quiet
       - name: Build and start every service
-        run: docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml up -d --build --wait --wait-timeout 240
+        run: |
+          services=()
+          if [[ "$BRANCH_QA_FOCUSED" == true ]]; then services=(auth-api branch-api); fi
+          docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml up -d --build --wait --wait-timeout 240 "${services[@]}"
       - name: Verify all API health endpoints
         run: |
           set -euo pipefail
-          for port in 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010; do
+          ports=(9001 9002 9003 9004 9005 9006 9007 9008 9009 9010)
+          if [[ "$BRANCH_QA_FOCUSED" == true ]]; then ports=(9001 9002); fi
+          for port in "${ports[@]}"; do
             curl --fail --silent --show-error "http://127.0.0.1:${port}/health" || {
               if [ "$port" = 9008 ] || [ "$port" = 9010 ]; then
                 curl --fail --silent --show-error "http://127.0.0.1:${port}/healthz"
@@ -72,11 +79,13 @@ jobs:
             }
           done
       - name: Exercise stock, transfer, supply and sales on the disposable database
+        if: env.BRANCH_QA_FOCUSED != 'true'
         run: python3 tests/integration/feature_write_smoke.py
       - name: Replay the 50 QA requests
+        if: env.BRANCH_QA_FOCUSED != 'true'
         run: python3 tests/integration/backend_qa_recheck.py
       - name: Check out the Flutter integration branch
-        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         uses: actions/checkout@v4
         with:
           repository: NorthstarEngineering/RAS-Mobile-Frontend
@@ -84,12 +93,12 @@ jobs:
           path: frontend
           persist-credentials: false
       - name: Set up Flutter
-        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.1'
       - name: Build Flutter against the disposable gateway
-        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         run: |
           git -C frontend apply "$PWD/tests/integration/browser_frontend.patch"
           cd frontend
@@ -99,7 +108,7 @@ jobs:
           for key in "${keys[@]}"; do defines+=("--dart-define=RAS_${key}_BASE_URL=http://127.0.0.1:5173"); done
           flutter build web --no-pub --no-wasm-dry-run "${defines[@]}"
       - name: Exercise browser buttons against the live stack
-        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         run: |
           trap 'echo "::error title=Browser QA setup::Line $LINENO failed during browser setup"' ERR
           npm install --no-save --no-package-lock playwright@1.55.0

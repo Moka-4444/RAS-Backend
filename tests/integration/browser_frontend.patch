@@ -1,8 +1,19 @@
 diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
-index bc154f3..3443192 100644
+index bc154f3..aaa6266 100644
 --- a/lib/core/routing/app_router.dart
 +++ b/lib/core/routing/app_router.dart
-@@ -294,41 +294,31 @@ final appRouter = GoRouter(
+@@ -196,8 +196,9 @@ final appRouter = GoRouter(
+     GoRoute(
+       path: '/branches/:id',
+       name: 'branch-details',
++      redirect: (_, state) => state.extra is Branch ? null : '/branches',
+       builder: (context, state) {
+-        final branch = state.extra as Branch?;
++        final branch = state.extra as Branch;
+         return MobileViewport(child: BranchDetailsScreen(branch: branch));
+       },
+     ),
+@@ -294,41 +295,31 @@ final appRouter = GoRouter(
      GoRoute(
        path: '/attendance/details',
        name: 'attendance-details',
@@ -1275,42 +1286,25 @@ index 780c5b3..cf0d29a 100644
      );
    }
 diff --git a/lib/features/branches/presentation/screens/branch_details_screen.dart b/lib/features/branches/presentation/screens/branch_details_screen.dart
-index 1109757..ce3defa 100644
+index 1109757..05b382b 100644
 --- a/lib/features/branches/presentation/screens/branch_details_screen.dart
 +++ b/lib/features/branches/presentation/screens/branch_details_screen.dart
-@@ -1,415 +1,416 @@
--import 'package:flutter/material.dart';
--import 'package:go_router/go_router.dart';
--import 'package:material_symbols_icons/symbols.dart';
--
--import '../../../../core/theme/app_colors.dart';
--import '../../../../core/theme/app_dimens.dart';
--import '../../../../core/theme/app_typography.dart';
--import '../../../../core/widgets/widgets.dart';
--import '../../../../core/di/service_locator.dart';
--import '../../domain/entities/branch.dart';
--import '../../domain/repositories/branch_repository.dart';
--
--class BranchDetailsScreen extends StatefulWidget {
+@@ -11,9 +11,9 @@ import '../../domain/entities/branch.dart';
+ import '../../domain/repositories/branch_repository.dart';
+ 
+ class BranchDetailsScreen extends StatefulWidget {
 -  final Branch? branch;
--
++  final Branch branch;
+ 
 -  const BranchDetailsScreen({super.key, this.branch});
--
--  @override
--  State<BranchDetailsScreen> createState() => _BranchDetailsScreenState();
--}
--
--class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
--  late final TextEditingController _nameController;
--  late final TextEditingController _phoneController;
--  late final TextEditingController _addressController;
--  late final TextEditingController _managerController;
--  bool _isActive = true;
--  bool _isSaving = false;
--
--  @override
--  void initState() {
--    super.initState();
++  const BranchDetailsScreen({super.key, required this.branch});
+ 
+   @override
+   State<BranchDetailsScreen> createState() => _BranchDetailsScreenState();
+@@ -30,20 +30,7 @@ class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
+   @override
+   void initState() {
+     super.initState();
 -    final b =
 -        widget.branch ??
 -        const Branch(
@@ -1325,49 +1319,39 @@ index 1109757..ce3defa 100644
 -          isMain: true,
 -          posTerminalsCount: 5,
 -        );
--    _nameController = TextEditingController(text: b.name);
--    _phoneController = TextEditingController(text: b.phone);
--    _addressController = TextEditingController(text: b.address);
--    _managerController = TextEditingController(text: b.managerName);
--    _isActive = b.isActive;
--  }
--
--  @override
--  void dispose() {
--    _nameController.dispose();
--    _phoneController.dispose();
--    _addressController.dispose();
--    _managerController.dispose();
--    super.dispose();
--  }
--
++    final b = widget.branch;
+     _nameController = TextEditingController(text: b.name);
+     _phoneController = TextEditingController(text: b.phone);
+     _addressController = TextEditingController(text: b.address);
+@@ -60,11 +47,12 @@ class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
+     super.dispose();
+   }
+ 
 -  void _saveChanges() async {
--    setState(() => _isSaving = true);
--    try {
++  Future<void> _saveChanges() async {
++    if (_isSaving) return;
+     setState(() => _isSaving = true);
+     try {
 -      await sl<BranchRepository>().updateBranch(
 -        widget.branch?.id ?? '',
--        name: _nameController.text.trim(),
--        address: _addressController.text.trim(),
--        isActive: _isActive,
--      );
--      if (!mounted) return;
--      ScaffoldMessenger.of(
--        context,
--      ).showSnackBar(const SnackBar(content: Text('تم تحديث الفرع بنجاح')));
++      final saved = await sl<BranchRepository>().updateBranch(
++        widget.branch.id,
+         name: _nameController.text.trim(),
+         address: _addressController.text.trim(),
+         isActive: _isActive,
+@@ -73,7 +61,7 @@ class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
+       ScaffoldMessenger.of(
+         context,
+       ).showSnackBar(const SnackBar(content: Text('تم تحديث الفرع بنجاح')));
 -      context.pop();
--    } catch (error) {
--      if (mounted) {
--        ScaffoldMessenger.of(
--          context,
--        ).showSnackBar(SnackBar(content: Text('تعذر تحديث الفرع: $error')));
--      }
--    } finally {
--      if (mounted) setState(() => _isSaving = false);
--    }
--  }
--
--  @override
--  Widget build(BuildContext context) {
++      context.pop(saved);
+     } catch (error) {
+       if (mounted) {
+         ScaffoldMessenger.of(
+@@ -87,20 +75,7 @@ class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
+ 
+   @override
+   Widget build(BuildContext context) {
 -    final b =
 -        widget.branch ??
 -        const Branch(
@@ -1382,966 +1366,45 @@ index 1109757..ce3defa 100644
 -          isMain: true,
 -          posTerminalsCount: 5,
 -        );
--
--    return Scaffold(
--      backgroundColor: AppColors.surface,
--      appBar: AppBar(
--        backgroundColor: AppColors.surface.withValues(alpha: 0.9),
--        elevation: 0,
--        scrolledUnderElevation: 0,
--        leading: IconButton(
--          icon: const Icon(Symbols.arrow_forward, color: AppColors.onSurface),
--          onPressed: () => context.pop(),
--        ),
--        title: Text(
--          'تفاصيل وتعديل الفرع',
--          style: AppTypography.headlineSm.copyWith(fontSize: 18),
--        ),
--      ),
--      body: SafeArea(
--        child: SingleChildScrollView(
--          padding: const EdgeInsets.symmetric(
--            horizontal: AppSpacing.margin,
--            vertical: AppSpacing.md,
--          ),
--          child: Column(
--            crossAxisAlignment: CrossAxisAlignment.stretch,
--            children: [
--              // Branch Profile Overview Card
--              RmsCard(
--                child: Column(
--                  crossAxisAlignment: CrossAxisAlignment.start,
--                  children: [
--                    Row(
--                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
--                      children: [
--                        Row(
--                          children: [
--                            Container(
--                              padding: const EdgeInsets.symmetric(
--                                horizontal: 8,
--                                vertical: 3,
--                              ),
--                              decoration: BoxDecoration(
--                                color: AppColors.primaryFixed,
--                                borderRadius: BorderRadius.circular(
--                                  AppDimens.radiusSm,
--                                ),
--                              ),
--                              child: Text(
--                                b.code,
--                                style: AppTypography.labelSm.copyWith(
--                                  fontWeight: FontWeight.bold,
--                                  fontFamily: 'monospace',
--                                  color: AppColors.onPrimaryFixedVariant,
--                                ),
--                              ),
--                            ),
--                            const SizedBox(width: 8),
--                            if (b.isMain)
--                              Container(
--                                padding: const EdgeInsets.symmetric(
--                                  horizontal: 8,
--                                  vertical: 2,
--                                ),
--                                decoration: BoxDecoration(
--                                  color: const Color(0xFFEAF5EA),
--                                  borderRadius: BorderRadius.circular(
--                                    AppDimens.radiusFull,
--                                  ),
--                                ),
--                                child: Text(
--                                  'المقر الرئيسي',
--                                  style: AppTypography.labelSm.copyWith(
--                                    color: const Color(0xFF2E8B2E),
--                                    fontWeight: FontWeight.bold,
--                                  ),
--                                ),
--                              ),
--                          ],
--                        ),
--                        Container(
--                          padding: const EdgeInsets.symmetric(
--                            horizontal: 8,
--                            vertical: 3,
--                          ),
--                          decoration: BoxDecoration(
--                            color: _isActive
--                                ? const Color(0xFFEAF5EA)
--                                : AppColors.surfaceContainerHigh,
--                            borderRadius: BorderRadius.circular(
--                              AppDimens.radiusFull,
--                            ),
--                          ),
--                          child: Text(
--                            _isActive ? 'تشغيل نشط' : 'موقف مؤقتاً',
--                            style: AppTypography.labelSm.copyWith(
--                              color: _isActive
--                                  ? const Color(0xFF2E8B2E)
--                                  : AppColors.secondary,
--                              fontWeight: FontWeight.bold,
--                            ),
--                          ),
--                        ),
--                      ],
--                    ),
--                    const SizedBox(height: AppSpacing.sm),
--                    Text(b.name, style: AppTypography.headlineSm),
--                    Text(
--                      b.address,
--                      style: AppTypography.bodySm.copyWith(
--                        color: AppColors.secondary,
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--                    const Divider(height: 1),
--                    const SizedBox(height: AppSpacing.sm),
--                    Row(
--                      children: [
--                        Expanded(
--                          child: Column(
--                            crossAxisAlignment: CrossAxisAlignment.start,
--                            children: [
--                              Text(
--                                'الموظفون',
--                                style: AppTypography.labelSm.copyWith(
--                                  color: AppColors.secondary,
--                                ),
--                              ),
--                              Text(
--                                '${b.employeeCount} موظف',
--                                style: AppTypography.labelMd.copyWith(
--                                  fontWeight: FontWeight.bold,
--                                ),
--                              ),
--                            ],
--                          ),
--                        ),
--                        Expanded(
--                          child: Column(
--                            crossAxisAlignment: CrossAxisAlignment.start,
--                            children: [
--                              Text(
--                                'نقاط البيع',
--                                style: AppTypography.labelSm.copyWith(
--                                  color: AppColors.secondary,
--                                ),
--                              ),
--                              Text(
--                                '${b.posTerminalsCount} نقاط',
--                                style: AppTypography.labelMd.copyWith(
--                                  fontWeight: FontWeight.bold,
--                                ),
--                              ),
--                            ],
--                          ),
--                        ),
--                        Expanded(
--                          child: Column(
--                            crossAxisAlignment: CrossAxisAlignment.start,
--                            children: [
--                              Text(
--                                'الكفاءة التشغيلية',
--                                style: AppTypography.labelSm.copyWith(
--                                  color: AppColors.secondary,
--                                ),
--                              ),
--                              Text(
--                                '${b.efficiencyRate}%',
--                                style: AppTypography.labelMd.copyWith(
--                                  fontWeight: FontWeight.bold,
--                                  color: const Color(0xFF2E8B2E),
--                                ),
--                              ),
--                            ],
--                          ),
--                        ),
--                      ],
--                    ),
--                  ],
--                ),
--              ),
--              const SizedBox(height: AppSpacing.md),
--
--              // Edit Form Card
--              RmsCard(
--                child: Column(
--                  crossAxisAlignment: CrossAxisAlignment.start,
--                  children: [
--                    Text(
--                      'تعديل البيانات الميدانية',
--                      style: AppTypography.labelMd.copyWith(
--                        fontWeight: FontWeight.bold,
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--
--                    // Name
--                    Text(
--                      'اسم الفرع',
--                      style: AppTypography.labelSm.copyWith(
--                        fontWeight: FontWeight.bold,
--                      ),
--                    ),
--                    const SizedBox(height: 4),
--                    TextField(
--                      controller: _nameController,
--                      decoration: const InputDecoration(
--                        border: OutlineInputBorder(),
--                        prefixIcon: Icon(Symbols.store),
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--
--                    // Phone
--                    Text(
--                      'رقم الهاتف',
--                      style: AppTypography.labelSm.copyWith(
--                        fontWeight: FontWeight.bold,
--                      ),
--                    ),
--                    const SizedBox(height: 4),
--                    TextField(
--                      controller: _phoneController,
--                      decoration: const InputDecoration(
--                        border: OutlineInputBorder(),
--                        prefixIcon: Icon(Symbols.phone),
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--
--                    // Address
--                    Text(
--                      'العنوان',
--                      style: AppTypography.labelSm.copyWith(
--                        fontWeight: FontWeight.bold,
--                      ),
--                    ),
--                    const SizedBox(height: 4),
--                    TextField(
--                      controller: _addressController,
--                      maxLines: 2,
--                      decoration: const InputDecoration(
--                        border: OutlineInputBorder(),
--                        prefixIcon: Icon(Symbols.location_on),
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--
--                    // Manager
--                    Text(
--                      'مدير الفرع المشرف',
--                      style: AppTypography.labelSm.copyWith(
--                        fontWeight: FontWeight.bold,
--                      ),
--                    ),
--                    const SizedBox(height: 4),
--                    TextField(
--                      controller: _managerController,
--                      decoration: const InputDecoration(
--                        border: OutlineInputBorder(),
--                        prefixIcon: Icon(Symbols.person),
--                      ),
--                    ),
--                    const SizedBox(height: AppSpacing.md),
--
--                    // Active Switch
--                    SwitchListTile(
--                      contentPadding: EdgeInsets.zero,
--                      title: const Text('حالة تشغيل الفرع'),
--                      subtitle: Text(
--                        _isActive
--                            ? 'الفرع يستقبل الطلبات ويعمل بانتظام'
--                            : 'الفرع موقف مؤقتاً عن استقبال الطلبات',
--                      ),
--                      activeThumbColor: AppColors.primary,
--                      value: _isActive,
--                      onChanged: (val) => setState(() => _isActive = val),
--                    ),
--                  ],
--                ),
--              ),
--              const SizedBox(height: AppSpacing.xl),
--
--              // Buttons
--              ElevatedButton.icon(
--                onPressed: _isSaving ? null : _saveChanges,
--                icon: _isSaving
--                    ? const SizedBox(
--                        width: 20,
--                        height: 20,
--                        child: CircularProgressIndicator(
--                          color: Colors.white,
--                          strokeWidth: 2,
--                        ),
--                      )
--                    : const Icon(Symbols.save),
--                label: Text(_isSaving ? 'جاري الحفظ...' : 'حفظ تعديلات الفرع'),
--                style: ElevatedButton.styleFrom(
--                  backgroundColor: AppColors.primary,
--                  foregroundColor: Colors.white,
--                  padding: const EdgeInsets.symmetric(vertical: 14),
--                  shape: RoundedRectangleBorder(
--                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
--                  ),
--                ),
--              ),
--              const SizedBox(height: 24),
--            ],
--          ),
--        ),
--      ),
--    );
--  }
--}
-+import 'package:flutter/material.dart';
-+import 'package:go_router/go_router.dart';
-+import 'package:material_symbols_icons/symbols.dart';
-+
-+import '../../../../core/theme/app_colors.dart';
-+import '../../../../core/theme/app_dimens.dart';
-+import '../../../../core/theme/app_typography.dart';
-+import '../../../../core/widgets/widgets.dart';
-+import '../../../../core/di/service_locator.dart';
-+import '../../domain/entities/branch.dart';
-+import '../../domain/repositories/branch_repository.dart';
-+
-+class BranchDetailsScreen extends StatefulWidget {
-+  final Branch? branch;
-+
-+  const BranchDetailsScreen({super.key, this.branch});
-+
-+  @override
-+  State<BranchDetailsScreen> createState() => _BranchDetailsScreenState();
-+}
-+
-+class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
-+  late final TextEditingController _nameController;
-+  late final TextEditingController _phoneController;
-+  late final TextEditingController _addressController;
-+  late final TextEditingController _managerController;
-+  bool _isActive = true;
-+  bool _isSaving = false;
-+
-+  @override
-+  void initState() {
-+    super.initState();
-+    final b =
-+        widget.branch ??
-+        const Branch(
-+          id: 'br_1',
-+          code: 'BR-01',
-+          name: 'فرع وسط البلد (#01)',
-+          address: '24 شارع طلعت حرب، وسط البلد، القاهرة',
-+          phone: '0223957810',
-+          managerName: 'م. حسام السيد',
-+          employeeCount: 18,
-+          efficiencyRate: 99.1,
-+          isMain: true,
-+          posTerminalsCount: 5,
-+        );
-+    _nameController = TextEditingController(text: b.name);
-+    _phoneController = TextEditingController(text: b.phone);
-+    _addressController = TextEditingController(text: b.address);
-+    _managerController = TextEditingController(text: b.managerName);
-+    _isActive = b.isActive;
-+  }
-+
-+  @override
-+  void dispose() {
-+    _nameController.dispose();
-+    _phoneController.dispose();
-+    _addressController.dispose();
-+    _managerController.dispose();
-+    super.dispose();
-+  }
-+
-+  void _saveChanges() async {
-+    setState(() => _isSaving = true);
-+    try {
-+      await sl<BranchRepository>().updateBranch(
-+        widget.branch?.id ?? '',
-+        name: _nameController.text.trim(),
-+        address: _addressController.text.trim(),
-+        isActive: _isActive,
-+      );
-+      if (!mounted) return;
-+      ScaffoldMessenger.of(
-+        context,
-+      ).showSnackBar(const SnackBar(content: Text('تم تحديث الفرع بنجاح')));
-+      context.pop();
-+    } catch (error) {
-+      if (mounted) {
-+        ScaffoldMessenger.of(
-+          context,
-+        ).showSnackBar(SnackBar(content: Text('تعذر تحديث الفرع: $error')));
-+      }
-+    } finally {
-+      if (mounted) setState(() => _isSaving = false);
-+    }
-+  }
-+
-+  @override
-+  Widget build(BuildContext context) {
-+    final b =
-+        widget.branch ??
-+        const Branch(
-+          id: 'br_1',
-+          code: 'BR-01',
-+          name: 'فرع وسط البلد (#01)',
-+          address: '24 شارع طلعت حرب، وسط البلد، القاهرة',
-+          phone: '0223957810',
-+          managerName: 'م. حسام السيد',
-+          employeeCount: 18,
-+          efficiencyRate: 99.1,
-+          isMain: true,
-+          posTerminalsCount: 5,
-+        );
-+
-+    return Scaffold(
-+      backgroundColor: AppColors.surface,
-+      appBar: AppBar(
-+        backgroundColor: AppColors.surface.withValues(alpha: 0.9),
-+        elevation: 0,
-+        scrolledUnderElevation: 0,
-+        leading: IconButton(
-+          icon: const Icon(Symbols.arrow_forward, color: AppColors.onSurface),
-+          onPressed: () => context.pop(),
-+        ),
-+        title: Text(
-+          'تفاصيل وتعديل الفرع',
-+          style: AppTypography.headlineSm.copyWith(fontSize: 18),
-+        ),
-+      ),
-+      body: SafeArea(
-+        child: SingleChildScrollView(
-+          padding: const EdgeInsets.symmetric(
-+            horizontal: AppSpacing.margin,
-+            vertical: AppSpacing.md,
-+          ),
-+          child: Column(
-+            crossAxisAlignment: CrossAxisAlignment.stretch,
-+            children: [
-+              // Branch Profile Overview Card
-+              RmsCard(
-+                child: Column(
-+                  crossAxisAlignment: CrossAxisAlignment.start,
-+                  children: [
-+                    Row(
-+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-+                      children: [
-+                        Row(
-+                          children: [
-+                            Container(
-+                              padding: const EdgeInsets.symmetric(
-+                                horizontal: 8,
-+                                vertical: 3,
-+                              ),
-+                              decoration: BoxDecoration(
-+                                color: AppColors.primaryFixed,
-+                                borderRadius: BorderRadius.circular(
-+                                  AppDimens.radiusSm,
-+                                ),
-+                              ),
-+                              child: Text(
-+                                b.code,
-+                                style: AppTypography.labelSm.copyWith(
-+                                  fontWeight: FontWeight.bold,
-+                                  fontFamily: 'monospace',
-+                                  color: AppColors.onPrimaryFixedVariant,
-+                                ),
-+                              ),
-+                            ),
-+                            const SizedBox(width: 8),
-+                            if (b.isMain)
-+                              Container(
-+                                padding: const EdgeInsets.symmetric(
-+                                  horizontal: 8,
-+                                  vertical: 2,
-+                                ),
-+                                decoration: BoxDecoration(
-+                                  color: const Color(0xFFEAF5EA),
-+                                  borderRadius: BorderRadius.circular(
-+                                    AppDimens.radiusFull,
-+                                  ),
-+                                ),
-+                                child: Text(
-+                                  'المقر الرئيسي',
-+                                  style: AppTypography.labelSm.copyWith(
-+                                    color: const Color(0xFF2E8B2E),
-+                                    fontWeight: FontWeight.bold,
-+                                  ),
-+                                ),
-+                              ),
-+                          ],
-+                        ),
-+                        Container(
-+                          padding: const EdgeInsets.symmetric(
-+                            horizontal: 8,
-+                            vertical: 3,
-+                          ),
-+                          decoration: BoxDecoration(
-+                            color: _isActive
-+                                ? const Color(0xFFEAF5EA)
-+                                : AppColors.surfaceContainerHigh,
-+                            borderRadius: BorderRadius.circular(
-+                              AppDimens.radiusFull,
-+                            ),
-+                          ),
-+                          child: Text(
-+                            _isActive ? 'تشغيل نشط' : 'موقف مؤقتاً',
-+                            style: AppTypography.labelSm.copyWith(
-+                              color: _isActive
-+                                  ? const Color(0xFF2E8B2E)
-+                                  : AppColors.secondary,
-+                              fontWeight: FontWeight.bold,
-+                            ),
-+                          ),
-+                        ),
-+                      ],
-+                    ),
-+                    const SizedBox(height: AppSpacing.sm),
-+                    Text(b.name, style: AppTypography.headlineSm),
-+                    Text(
-+                      b.address,
-+                      style: AppTypography.bodySm.copyWith(
-+                        color: AppColors.secondary,
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+                    const Divider(height: 1),
-+                    const SizedBox(height: AppSpacing.sm),
-+                    Row(
-+                      children: [
-+                        Expanded(
-+                          child: Column(
-+                            crossAxisAlignment: CrossAxisAlignment.start,
-+                            children: [
-+                              Text(
-+                                'الموظفون',
-+                                style: AppTypography.labelSm.copyWith(
-+                                  color: AppColors.secondary,
-+                                ),
-+                              ),
-+                              Text(
-+                                '${b.employeeCount} موظف',
-+                                style: AppTypography.labelMd.copyWith(
-+                                  fontWeight: FontWeight.bold,
-+                                ),
-+                              ),
-+                            ],
-+                          ),
-+                        ),
-+                        Expanded(
-+                          child: Column(
-+                            crossAxisAlignment: CrossAxisAlignment.start,
-+                            children: [
-+                              Text(
-+                                'نقاط البيع',
-+                                style: AppTypography.labelSm.copyWith(
-+                                  color: AppColors.secondary,
-+                                ),
-+                              ),
-+                              Text(
-+                                '${b.posTerminalsCount} نقاط',
-+                                style: AppTypography.labelMd.copyWith(
-+                                  fontWeight: FontWeight.bold,
-+                                ),
-+                              ),
-+                            ],
-+                          ),
-+                        ),
-+                        Expanded(
-+                          child: Column(
-+                            crossAxisAlignment: CrossAxisAlignment.start,
-+                            children: [
-+                              Text(
-+                                'الكفاءة التشغيلية',
-+                                style: AppTypography.labelSm.copyWith(
-+                                  color: AppColors.secondary,
-+                                ),
-+                              ),
-+                              Text(
-+                                '${b.efficiencyRate}%',
-+                                style: AppTypography.labelMd.copyWith(
-+                                  fontWeight: FontWeight.bold,
-+                                  color: const Color(0xFF2E8B2E),
-+                                ),
-+                              ),
-+                            ],
-+                          ),
-+                        ),
-+                      ],
-+                    ),
-+                  ],
-+                ),
-+              ),
-+              const SizedBox(height: AppSpacing.md),
-+
-+              // Edit Form Card
-+              RmsCard(
-+                child: Column(
-+                  crossAxisAlignment: CrossAxisAlignment.start,
-+                  children: [
-+                    Text(
-+                      'تعديل البيانات الميدانية',
-+                      style: AppTypography.labelMd.copyWith(
-+                        fontWeight: FontWeight.bold,
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+
-+                    // Name
-+                    Text(
-+                      'اسم الفرع',
-+                      style: AppTypography.labelSm.copyWith(
-+                        fontWeight: FontWeight.bold,
-+                      ),
-+                    ),
-+                    const SizedBox(height: 4),
-+                    TextField(
-+                      controller: _nameController,
-+                      decoration: const InputDecoration(
-+                        border: OutlineInputBorder(),
-+                        prefixIcon: Icon(Symbols.store),
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+
-+                    // Phone
-+                    Text(
-+                      'رقم الهاتف',
-+                      style: AppTypography.labelSm.copyWith(
-+                        fontWeight: FontWeight.bold,
-+                      ),
-+                    ),
-+                    const SizedBox(height: 4),
-+                    TextField(
-+                      controller: _phoneController,
-+                      decoration: const InputDecoration(
-+                        border: OutlineInputBorder(),
-+                        prefixIcon: Icon(Symbols.phone),
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+
-+                    // Address
-+                    Text(
-+                      'العنوان',
-+                      style: AppTypography.labelSm.copyWith(
-+                        fontWeight: FontWeight.bold,
-+                      ),
-+                    ),
-+                    const SizedBox(height: 4),
-+                    TextField(
-+                      controller: _addressController,
-+                      maxLines: 2,
-+                      decoration: const InputDecoration(
++    final b = widget.branch;
+ 
+     return Scaffold(
+       backgroundColor: AppColors.surface,
+@@ -341,6 +316,7 @@ class _BranchDetailsScreenState extends State<BranchDetailsScreen> {
+                       controller: _addressController,
+                       maxLines: 2,
+                       decoration: const InputDecoration(
 +                        hintText: 'العنوان',
-+                        border: OutlineInputBorder(),
-+                        prefixIcon: Icon(Symbols.location_on),
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+
-+                    // Manager
-+                    Text(
-+                      'مدير الفرع المشرف',
-+                      style: AppTypography.labelSm.copyWith(
-+                        fontWeight: FontWeight.bold,
-+                      ),
-+                    ),
-+                    const SizedBox(height: 4),
-+                    TextField(
-+                      controller: _managerController,
-+                      decoration: const InputDecoration(
-+                        border: OutlineInputBorder(),
-+                        prefixIcon: Icon(Symbols.person),
-+                      ),
-+                    ),
-+                    const SizedBox(height: AppSpacing.md),
-+
-+                    // Active Switch
-+                    SwitchListTile(
-+                      contentPadding: EdgeInsets.zero,
-+                      title: const Text('حالة تشغيل الفرع'),
-+                      subtitle: Text(
-+                        _isActive
-+                            ? 'الفرع يستقبل الطلبات ويعمل بانتظام'
-+                            : 'الفرع موقف مؤقتاً عن استقبال الطلبات',
-+                      ),
-+                      activeThumbColor: AppColors.primary,
-+                      value: _isActive,
-+                      onChanged: (val) => setState(() => _isActive = val),
-+                    ),
-+                  ],
-+                ),
-+              ),
-+              const SizedBox(height: AppSpacing.xl),
-+
-+              // Buttons
-+              ElevatedButton.icon(
-+                onPressed: _isSaving ? null : _saveChanges,
-+                icon: _isSaving
-+                    ? const SizedBox(
-+                        width: 20,
-+                        height: 20,
-+                        child: CircularProgressIndicator(
-+                          color: Colors.white,
-+                          strokeWidth: 2,
-+                        ),
-+                      )
-+                    : const Icon(Symbols.save),
-+                label: Text(_isSaving ? 'جاري الحفظ...' : 'حفظ تعديلات الفرع'),
-+                style: ElevatedButton.styleFrom(
-+                  backgroundColor: AppColors.primary,
-+                  foregroundColor: Colors.white,
-+                  padding: const EdgeInsets.symmetric(vertical: 14),
-+                  shape: RoundedRectangleBorder(
-+                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
-+                  ),
-+                ),
-+              ),
-+              const SizedBox(height: 24),
-+            ],
-+          ),
-+        ),
-+      ),
-+    );
-+  }
-+}
+                         border: OutlineInputBorder(),
+                         prefixIcon: Icon(Symbols.location_on),
+                       ),
 diff --git a/lib/features/branches/presentation/screens/branch_list_screen.dart b/lib/features/branches/presentation/screens/branch_list_screen.dart
-index 0591d92..df0c00b 100644
+index 0591d92..d6e0c6e 100644
 --- a/lib/features/branches/presentation/screens/branch_list_screen.dart
 +++ b/lib/features/branches/presentation/screens/branch_list_screen.dart
-@@ -1,364 +1,371 @@
--import 'package:flutter/material.dart';
--import 'package:go_router/go_router.dart';
--import 'package:material_symbols_icons/symbols.dart';
--
--import '../../../../core/theme/app_colors.dart';
--import '../../../../core/theme/app_dimens.dart';
--import '../../../../core/theme/app_typography.dart';
--import '../../../../core/di/service_locator.dart';
--import '../../domain/entities/branch.dart';
--import '../../domain/repositories/branch_repository.dart';
--
--class BranchListScreen extends StatefulWidget {
--  const BranchListScreen({super.key});
--
--  @override
--  State<BranchListScreen> createState() => _BranchListScreenState();
--}
--
--class _BranchListScreenState extends State<BranchListScreen> {
--  String _searchQuery = '';
--
--  List<Branch> _branches = [];
--  bool _isLoading = true;
--
--  @override
--  void initState() {
--    super.initState();
--    _loadBranches();
--  }
--
--  Future<void> _loadBranches() async {
--    if (mounted) setState(() => _isLoading = true);
--    try {
--      final branches = await sl<BranchRepository>().getBranches();
--      if (mounted) {
--        setState(() {
--          _branches = branches;
--          _isLoading = false;
--        });
--      }
--    } catch (error) {
--      if (mounted) {
--        setState(() => _isLoading = false);
--        ScaffoldMessenger.of(
--          context,
--        ).showSnackBar(SnackBar(content: Text('تعذر تحميل الفروع: $error')));
--      }
--    }
--  }
--
--  Future<void> _openCreateBranch() async {
--    final created = await context.push<Branch>('/branches/create');
--    if (!mounted) return;
--    if (created != null &&
--        !_branches.any((branch) => branch.id == created.id)) {
--      setState(() => _branches = [..._branches, created]);
--    }
--    await _loadBranches();
--  }
--
--  List<Branch> get _filteredBranches {
--    if (_searchQuery.trim().isEmpty) return _branches;
--    return _branches.where((b) {
--      return b.name.contains(_searchQuery) ||
--          b.code.toLowerCase().contains(_searchQuery.toLowerCase()) ||
--          b.address.contains(_searchQuery);
--    }).toList();
--  }
--
--  @override
--  Widget build(BuildContext context) {
--    return Scaffold(
--      backgroundColor: AppColors.surface,
--      appBar: AppBar(
--        backgroundColor: AppColors.surface.withValues(alpha: 0.9),
--        elevation: 0,
--        scrolledUnderElevation: 0,
--        leading: IconButton(
--          icon: const Icon(Symbols.arrow_forward, color: AppColors.onSurface),
--          onPressed: () => context.pop(),
--        ),
--        title: Text(
--          'إدارة شبكة الفروع',
--          style: AppTypography.headlineSm.copyWith(fontSize: 18),
--        ),
--        actions: [
--          IconButton(
--            icon: const Icon(Symbols.add, color: AppColors.primary),
--            tooltip: 'إضافة فرع جديد',
--            onPressed: _openCreateBranch,
--          ),
--        ],
--      ),
--      floatingActionButton: FloatingActionButton.extended(
--        backgroundColor: AppColors.primary,
--        foregroundColor: Colors.white,
--        icon: const Icon(Symbols.add_business),
--        label: const Text('إضافة فرع جديد'),
--        onPressed: _openCreateBranch,
--      ),
--      body: SafeArea(
--        child: Column(
--          children: [
--            if (_isLoading)
--              const Expanded(child: Center(child: CircularProgressIndicator()))
--            else
--              // Header stats banner
--              Padding(
--                padding: const EdgeInsets.symmetric(
--                  horizontal: AppSpacing.margin,
--                  vertical: AppSpacing.sm,
--                ),
--                child: Container(
--                  padding: const EdgeInsets.all(AppSpacing.md),
--                  decoration: BoxDecoration(
--                    color: AppColors.surfaceContainerLowest,
--                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
--                    boxShadow: const [
--                      BoxShadow(
--                        color: Color(0x06000000),
--                        blurRadius: 4,
--                        offset: Offset(0, 1),
--                      ),
--                    ],
--                  ),
--                  child: Row(
--                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
--                    children: [
--                      Column(
--                        crossAxisAlignment: CrossAxisAlignment.start,
--                        children: [
--                          Text(
--                            'التحكم الميداني المباشر',
--                            style: AppTypography.labelSm.copyWith(
--                              color: AppColors.secondary,
--                            ),
--                          ),
--                          Text(
--                            '${_branches.length} فرع مسجل من قاعدة البيانات',
--                            style: AppTypography.headlineSm.copyWith(
--                              fontSize: 16,
--                            ),
--                          ),
--                        ],
--                      ),
--                      Container(
--                        padding: const EdgeInsets.symmetric(
--                          horizontal: 10,
--                          vertical: 4,
--                        ),
--                        decoration: BoxDecoration(
--                          color: AppColors.surfaceContainerHigh,
--                          borderRadius: BorderRadius.circular(
--                            AppDimens.radiusFull,
--                          ),
--                        ),
--                        child: Row(
--                          children: [
--                            const Icon(
--                              Symbols.hub,
--                              color: AppColors.primary,
--                              size: 16,
--                            ),
--                            const SizedBox(width: 4),
--                            Text(
--                              'بيانات مباشرة',
--                              style: AppTypography.labelSm.copyWith(
--                                fontWeight: FontWeight.bold,
--                              ),
--                            ),
--                          ],
--                        ),
--                      ),
--                    ],
--                  ),
--                ),
--              ),
--
--            // Search Bar
--            Padding(
--              padding: const EdgeInsets.symmetric(
--                horizontal: AppSpacing.margin,
--                vertical: AppSpacing.xs,
--              ),
--              child: TextField(
--                decoration: InputDecoration(
--                  hintText: 'بحث باسم الفرع، الكود، أو العنوان...',
--                  prefixIcon: const Icon(Symbols.search),
--                  filled: true,
--                  fillColor: AppColors.surfaceContainerLowest,
--                  border: OutlineInputBorder(
--                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
--                    borderSide: BorderSide.none,
--                  ),
--                ),
--                onChanged: (val) => setState(() => _searchQuery = val),
--              ),
--            ),
--            const SizedBox(height: 8),
--
--            // List of Branches
--            Expanded(
--              child: ListView.separated(
--                padding: const EdgeInsets.fromLTRB(
--                  AppSpacing.margin,
--                  0,
--                  AppSpacing.margin,
--                  80,
--                ),
--                itemCount: _filteredBranches.length,
--                separatorBuilder: (_, __) =>
--                    const SizedBox(height: AppSpacing.sm),
--                itemBuilder: (context, index) {
--                  final branch = _filteredBranches[index];
--                  return _buildBranchCard(branch);
--                },
--              ),
--            ),
--          ],
--        ),
--      ),
--    );
--  }
--
--  Widget _buildBranchCard(Branch branch) {
--    final isKitchen = branch.type == BranchType.kitchen;
--
+@@ -224,138 +224,156 @@ class _BranchListScreenState extends State<BranchListScreen> {
+ 
+   Widget _buildBranchCard(Branch branch) {
+     final isKitchen = branch.type == BranchType.kitchen;
++    Future<void> open() async {
++      if (isKitchen) {
++        await context.push('/branches/central-kitchen');
++        return;
++      }
++      final saved = await context.push<Branch>(
++        '/branches/${branch.id}',
++        extra: branch,
++      );
++      if (!mounted || saved == null) return;
++      setState(() {
++        _branches = [
++          for (final current in _branches)
++            if (current.id == saved.id) saved else current,
++        ];
++      });
++      await _loadBranches();
++    }
+ 
 -    return Material(
 -      color: AppColors.surfaceContainerLowest,
 -      borderRadius: BorderRadius.circular(AppDimens.radiusXl),
@@ -2354,7 +1417,14 @@ index 0591d92..df0c00b 100644
 -            context.push('/branches/${branch.id}', extra: branch);
 -          }
 -        },
--        borderRadius: BorderRadius.circular(AppDimens.radiusXl),
++    return Semantics(
++      button: true,
++      label: '${branch.name}، ${branch.type.titleArabic}',
++      onTap: open,
++      excludeSemantics: true,
++      child: Material(
++        color: AppColors.surfaceContainerLowest,
+         borderRadius: BorderRadius.circular(AppDimens.radiusXl),
 -        child: Padding(
 -          padding: const EdgeInsets.all(AppSpacing.md),
 -          child: Column(
@@ -2365,362 +1435,6 @@ index 0591d92..df0c00b 100644
 -                children: [
 -                  Row(
 -                    children: [
--                      Container(
--                        padding: const EdgeInsets.symmetric(
--                          horizontal: 6,
--                          vertical: 2,
--                        ),
--                        decoration: BoxDecoration(
--                          color: isKitchen
--                              ? AppColors.surfaceContainerHigh
--                              : AppColors.primaryFixed,
--                          borderRadius: BorderRadius.circular(
--                            AppDimens.radiusSm,
--                          ),
--                        ),
--                        child: Text(
--                          branch.code,
--                          style: AppTypography.labelSm.copyWith(
--                            fontFamily: 'monospace',
--                            fontWeight: FontWeight.bold,
--                            color: isKitchen
--                                ? AppColors.onSurface
--                                : AppColors.onPrimaryFixedVariant,
--                          ),
--                        ),
--                      ),
--                      const SizedBox(width: 8),
--                      Text(
--                        branch.name,
--                        style: AppTypography.labelMd.copyWith(
--                          fontWeight: FontWeight.bold,
--                        ),
--                      ),
--                    ],
--                  ),
--                  if (branch.isMain)
--                    Container(
--                      padding: const EdgeInsets.symmetric(
--                        horizontal: 8,
--                        vertical: 2,
--                      ),
--                      decoration: BoxDecoration(
--                        color: const Color(0xFFEAF5EA),
--                        borderRadius: BorderRadius.circular(
--                          AppDimens.radiusFull,
--                        ),
--                      ),
--                      child: Text(
--                        'المقر الرئيسي',
--                        style: AppTypography.labelSm.copyWith(
--                          color: const Color(0xFF2E8B2E),
--                          fontSize: 10,
--                          fontWeight: FontWeight.bold,
--                        ),
--                      ),
--                    ),
--                ],
--              ),
--              const SizedBox(height: 6),
--              Text(
--                branch.address,
--                style: AppTypography.bodySm.copyWith(
--                  color: AppColors.secondary,
--                  fontSize: 12,
--                ),
--              ),
--              const SizedBox(height: AppSpacing.sm),
--              const Divider(height: 1, color: AppColors.surfaceContainer),
--              const SizedBox(height: AppSpacing.sm),
--              Row(
--                mainAxisAlignment: MainAxisAlignment.spaceBetween,
--                children: [
--                  Row(
--                    children: [
--                      const Icon(
--                        Symbols.badge,
--                        size: 16,
--                        color: AppColors.secondary,
--                      ),
--                      const SizedBox(width: 4),
--                      Text(
--                        branch.isActive ? 'نشط' : 'غير نشط',
--                        style: AppTypography.labelSm.copyWith(
--                          color: branch.isActive
--                              ? AppColors.success
--                              : AppColors.secondary,
--                        ),
--                      ),
--                    ],
--                  ),
--                  Row(
--                    children: [
--                      Text(
--                        branch.type.titleArabic,
--                        style: AppTypography.labelSm.copyWith(
--                          color: AppColors.secondary,
--                          fontWeight: FontWeight.bold,
--                        ),
--                      ),
--                      const SizedBox(width: 4),
--                      const Icon(
--                        Symbols.chevron_left,
--                        size: 16,
--                        color: AppColors.secondary,
--                      ),
--                    ],
--                  ),
--                ],
--              ),
--            ],
--          ),
--        ),
--      ),
--    );
--  }
--}
-+import 'package:flutter/material.dart';
-+import 'package:go_router/go_router.dart';
-+import 'package:material_symbols_icons/symbols.dart';
-+
-+import '../../../../core/theme/app_colors.dart';
-+import '../../../../core/theme/app_dimens.dart';
-+import '../../../../core/theme/app_typography.dart';
-+import '../../../../core/di/service_locator.dart';
-+import '../../domain/entities/branch.dart';
-+import '../../domain/repositories/branch_repository.dart';
-+
-+class BranchListScreen extends StatefulWidget {
-+  const BranchListScreen({super.key});
-+
-+  @override
-+  State<BranchListScreen> createState() => _BranchListScreenState();
-+}
-+
-+class _BranchListScreenState extends State<BranchListScreen> {
-+  String _searchQuery = '';
-+
-+  List<Branch> _branches = [];
-+  bool _isLoading = true;
-+
-+  @override
-+  void initState() {
-+    super.initState();
-+    _loadBranches();
-+  }
-+
-+  Future<void> _loadBranches() async {
-+    if (mounted) setState(() => _isLoading = true);
-+    try {
-+      final branches = await sl<BranchRepository>().getBranches();
-+      if (mounted) {
-+        setState(() {
-+          _branches = branches;
-+          _isLoading = false;
-+        });
-+      }
-+    } catch (error) {
-+      if (mounted) {
-+        setState(() => _isLoading = false);
-+        ScaffoldMessenger.of(
-+          context,
-+        ).showSnackBar(SnackBar(content: Text('تعذر تحميل الفروع: $error')));
-+      }
-+    }
-+  }
-+
-+  Future<void> _openCreateBranch() async {
-+    final created = await context.push<Branch>('/branches/create');
-+    if (!mounted) return;
-+    if (created != null &&
-+        !_branches.any((branch) => branch.id == created.id)) {
-+      setState(() => _branches = [..._branches, created]);
-+    }
-+    await _loadBranches();
-+  }
-+
-+  List<Branch> get _filteredBranches {
-+    if (_searchQuery.trim().isEmpty) return _branches;
-+    return _branches.where((b) {
-+      return b.name.contains(_searchQuery) ||
-+          b.code.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-+          b.address.contains(_searchQuery);
-+    }).toList();
-+  }
-+
-+  @override
-+  Widget build(BuildContext context) {
-+    return Scaffold(
-+      backgroundColor: AppColors.surface,
-+      appBar: AppBar(
-+        backgroundColor: AppColors.surface.withValues(alpha: 0.9),
-+        elevation: 0,
-+        scrolledUnderElevation: 0,
-+        leading: IconButton(
-+          icon: const Icon(Symbols.arrow_forward, color: AppColors.onSurface),
-+          onPressed: () => context.pop(),
-+        ),
-+        title: Text(
-+          'إدارة شبكة الفروع',
-+          style: AppTypography.headlineSm.copyWith(fontSize: 18),
-+        ),
-+        actions: [
-+          IconButton(
-+            icon: const Icon(Symbols.add, color: AppColors.primary),
-+            tooltip: 'إضافة فرع جديد',
-+            onPressed: _openCreateBranch,
-+          ),
-+        ],
-+      ),
-+      floatingActionButton: FloatingActionButton.extended(
-+        backgroundColor: AppColors.primary,
-+        foregroundColor: Colors.white,
-+        icon: const Icon(Symbols.add_business),
-+        label: const Text('إضافة فرع جديد'),
-+        onPressed: _openCreateBranch,
-+      ),
-+      body: SafeArea(
-+        child: Column(
-+          children: [
-+            if (_isLoading)
-+              const Expanded(child: Center(child: CircularProgressIndicator()))
-+            else
-+              // Header stats banner
-+              Padding(
-+                padding: const EdgeInsets.symmetric(
-+                  horizontal: AppSpacing.margin,
-+                  vertical: AppSpacing.sm,
-+                ),
-+                child: Container(
-+                  padding: const EdgeInsets.all(AppSpacing.md),
-+                  decoration: BoxDecoration(
-+                    color: AppColors.surfaceContainerLowest,
-+                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
-+                    boxShadow: const [
-+                      BoxShadow(
-+                        color: Color(0x06000000),
-+                        blurRadius: 4,
-+                        offset: Offset(0, 1),
-+                      ),
-+                    ],
-+                  ),
-+                  child: Row(
-+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-+                    children: [
-+                      Column(
-+                        crossAxisAlignment: CrossAxisAlignment.start,
-+                        children: [
-+                          Text(
-+                            'التحكم الميداني المباشر',
-+                            style: AppTypography.labelSm.copyWith(
-+                              color: AppColors.secondary,
-+                            ),
-+                          ),
-+                          Text(
-+                            '${_branches.length} فرع مسجل من قاعدة البيانات',
-+                            style: AppTypography.headlineSm.copyWith(
-+                              fontSize: 16,
-+                            ),
-+                          ),
-+                        ],
-+                      ),
-+                      Container(
-+                        padding: const EdgeInsets.symmetric(
-+                          horizontal: 10,
-+                          vertical: 4,
-+                        ),
-+                        decoration: BoxDecoration(
-+                          color: AppColors.surfaceContainerHigh,
-+                          borderRadius: BorderRadius.circular(
-+                            AppDimens.radiusFull,
-+                          ),
-+                        ),
-+                        child: Row(
-+                          children: [
-+                            const Icon(
-+                              Symbols.hub,
-+                              color: AppColors.primary,
-+                              size: 16,
-+                            ),
-+                            const SizedBox(width: 4),
-+                            Text(
-+                              'بيانات مباشرة',
-+                              style: AppTypography.labelSm.copyWith(
-+                                fontWeight: FontWeight.bold,
-+                              ),
-+                            ),
-+                          ],
-+                        ),
-+                      ),
-+                    ],
-+                  ),
-+                ),
-+              ),
-+
-+            // Search Bar
-+            Padding(
-+              padding: const EdgeInsets.symmetric(
-+                horizontal: AppSpacing.margin,
-+                vertical: AppSpacing.xs,
-+              ),
-+              child: TextField(
-+                decoration: InputDecoration(
-+                  hintText: 'بحث باسم الفرع، الكود، أو العنوان...',
-+                  prefixIcon: const Icon(Symbols.search),
-+                  filled: true,
-+                  fillColor: AppColors.surfaceContainerLowest,
-+                  border: OutlineInputBorder(
-+                    borderRadius: BorderRadius.circular(AppDimens.radiusXl),
-+                    borderSide: BorderSide.none,
-+                  ),
-+                ),
-+                onChanged: (val) => setState(() => _searchQuery = val),
-+              ),
-+            ),
-+            const SizedBox(height: 8),
-+
-+            // List of Branches
-+            Expanded(
-+              child: ListView.separated(
-+                padding: const EdgeInsets.fromLTRB(
-+                  AppSpacing.margin,
-+                  0,
-+                  AppSpacing.margin,
-+                  80,
-+                ),
-+                itemCount: _filteredBranches.length,
-+                separatorBuilder: (_, __) =>
-+                    const SizedBox(height: AppSpacing.sm),
-+                itemBuilder: (context, index) {
-+                  final branch = _filteredBranches[index];
-+                  return _buildBranchCard(branch);
-+                },
-+              ),
-+            ),
-+          ],
-+        ),
-+      ),
-+    );
-+  }
-+
-+  Widget _buildBranchCard(Branch branch) {
-+    final isKitchen = branch.type == BranchType.kitchen;
-+    void open() {
-+      if (isKitchen) {
-+        context.push('/branches/central-kitchen');
-+      } else {
-+        context.push('/branches/${branch.id}', extra: branch);
-+      }
-+    }
-+
-+    return Semantics(
-+      button: true,
-+      label: '${branch.name}، ${branch.type.titleArabic}',
-+      onTap: open,
-+      excludeSemantics: true,
-+      child: Material(
-+        color: AppColors.surfaceContainerLowest,
-+        borderRadius: BorderRadius.circular(AppDimens.radiusXl),
 +        elevation: 0.5,
 +        child: InkWell(
 +          onTap: open,
@@ -2769,26 +1483,44 @@ index 0591d92..df0c00b 100644
 +                      ],
 +                    ),
 +                    if (branch.isMain)
-+                      Container(
-+                        padding: const EdgeInsets.symmetric(
+                       Container(
+                         padding: const EdgeInsets.symmetric(
+-                          horizontal: 6,
 +                          horizontal: 8,
-+                          vertical: 2,
-+                        ),
-+                        decoration: BoxDecoration(
+                           vertical: 2,
+                         ),
+                         decoration: BoxDecoration(
+-                          color: isKitchen
+-                              ? AppColors.surfaceContainerHigh
+-                              : AppColors.primaryFixed,
 +                          color: const Color(0xFFEAF5EA),
-+                          borderRadius: BorderRadius.circular(
+                           borderRadius: BorderRadius.circular(
+-                            AppDimens.radiusSm,
 +                            AppDimens.radiusFull,
-+                          ),
-+                        ),
-+                        child: Text(
+                           ),
+                         ),
+                         child: Text(
+-                          branch.code,
 +                          'المقر الرئيسي',
-+                          style: AppTypography.labelSm.copyWith(
+                           style: AppTypography.labelSm.copyWith(
+-                            fontFamily: 'monospace',
 +                            color: const Color(0xFF2E8B2E),
 +                            fontSize: 10,
-+                            fontWeight: FontWeight.bold,
-+                          ),
-+                        ),
-+                      ),
+                             fontWeight: FontWeight.bold,
+-                            color: isKitchen
+-                                ? AppColors.onSurface
+-                                : AppColors.onPrimaryFixedVariant,
+                           ),
+                         ),
+                       ),
+-                      const SizedBox(width: 8),
+-                      Text(
+-                        branch.name,
+-                        style: AppTypography.labelMd.copyWith(
+-                          fontWeight: FontWeight.bold,
+-                        ),
+-                      ),
+-                    ],
 +                  ],
 +                ),
 +                const SizedBox(height: 6),
@@ -2797,7 +1529,17 @@ index 0591d92..df0c00b 100644
 +                  style: AppTypography.bodySm.copyWith(
 +                    color: AppColors.secondary,
 +                    fontSize: 12,
-+                  ),
+                   ),
+-                  if (branch.isMain)
+-                    Container(
+-                      padding: const EdgeInsets.symmetric(
+-                        horizontal: 8,
+-                        vertical: 2,
+-                      ),
+-                      decoration: BoxDecoration(
+-                        color: const Color(0xFFEAF5EA),
+-                        borderRadius: BorderRadius.circular(
+-                          AppDimens.radiusFull,
 +                ),
 +                const SizedBox(height: AppSpacing.sm),
 +                const Divider(height: 1, color: AppColors.surfaceContainer),
@@ -2811,7 +1553,14 @@ index 0591d92..df0c00b 100644
 +                          Symbols.badge,
 +                          size: 16,
 +                          color: AppColors.secondary,
-+                        ),
+                         ),
+-                      ),
+-                      child: Text(
+-                        'المقر الرئيسي',
+-                        style: AppTypography.labelSm.copyWith(
+-                          color: const Color(0xFF2E8B2E),
+-                          fontSize: 10,
+-                          fontWeight: FontWeight.bold,
 +                        const SizedBox(width: 4),
 +                        Text(
 +                          branch.isActive ? 'نشط' : 'غير نشط',
@@ -2820,9 +1569,40 @@ index 0591d92..df0c00b 100644
 +                                ? AppColors.success
 +                                : AppColors.secondary,
 +                          ),
-+                        ),
+                         ),
+-                      ),
 +                      ],
-+                    ),
+                     ),
+-                ],
+-              ),
+-              const SizedBox(height: 6),
+-              Text(
+-                branch.address,
+-                style: AppTypography.bodySm.copyWith(
+-                  color: AppColors.secondary,
+-                  fontSize: 12,
+-                ),
+-              ),
+-              const SizedBox(height: AppSpacing.sm),
+-              const Divider(height: 1, color: AppColors.surfaceContainer),
+-              const SizedBox(height: AppSpacing.sm),
+-              Row(
+-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+-                children: [
+-                  Row(
+-                    children: [
+-                      const Icon(
+-                        Symbols.badge,
+-                        size: 16,
+-                        color: AppColors.secondary,
+-                      ),
+-                      const SizedBox(width: 4),
+-                      Text(
+-                        branch.isActive ? 'نشط' : 'غير نشط',
+-                        style: AppTypography.labelSm.copyWith(
+-                          color: branch.isActive
+-                              ? AppColors.success
+-                              : AppColors.secondary,
 +                    Row(
 +                      children: [
 +                        Text(
@@ -2831,22 +1611,40 @@ index 0591d92..df0c00b 100644
 +                            color: AppColors.secondary,
 +                            fontWeight: FontWeight.bold,
 +                          ),
-+                        ),
+                         ),
+-                      ),
+-                    ],
+-                  ),
+-                  Row(
+-                    children: [
+-                      Text(
+-                        branch.type.titleArabic,
+-                        style: AppTypography.labelSm.copyWith(
 +                        const SizedBox(width: 4),
 +                        const Icon(
 +                          Symbols.chevron_left,
 +                          size: 16,
-+                          color: AppColors.secondary,
-+                        ),
+                           color: AppColors.secondary,
+-                          fontWeight: FontWeight.bold,
+                         ),
+-                      ),
+-                      const SizedBox(width: 4),
+-                      const Icon(
+-                        Symbols.chevron_left,
+-                        size: 16,
+-                        color: AppColors.secondary,
+-                      ),
+-                    ],
+-                  ),
+-                ],
+-              ),
+-            ],
 +                      ],
 +                    ),
 +                  ],
 +                ),
 +              ],
 +            ),
-+          ),
-+        ),
-+      ),
-+    );
-+  }
-+}
+           ),
+         ),
+       ),
