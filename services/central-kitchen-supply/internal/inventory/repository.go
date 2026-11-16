@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // ============================================================
@@ -212,6 +213,29 @@ func (r *postgresRepo) ListSupplyRequests(ctx context.Context) ([]*SupplyRequest
 	var reqs []*SupplyRequest
 	if err := r.db.SelectContext(ctx, &reqs, q); err != nil {
 		return nil, err
+	}
+	if len(reqs) == 0 {
+		return reqs, nil
+	}
+	requestIDs := make([]string, 0, len(reqs))
+	requestsByID := make(map[string]*SupplyRequest, len(reqs))
+	for _, request := range reqs {
+		requestIDs = append(requestIDs, request.ID)
+		requestsByID[request.ID] = request
+	}
+	const itemsQuery = `
+		SELECT id, request_id, good_id, requested_qty, approved_qty, received_qty, created_at
+		FROM supply_request_items
+		WHERE request_id = ANY($1::uuid[])
+		ORDER BY created_at, id
+	`
+	var items []*SupplyRequestItem
+	if err := r.db.SelectContext(ctx, &items, itemsQuery, pq.Array(requestIDs)); err != nil {
+		return nil, fmt.Errorf("list supply request items: %w", err)
+	}
+	for _, item := range items {
+		request := requestsByID[item.RequestID]
+		request.Items = append(request.Items, item)
 	}
 	return reqs, nil
 }

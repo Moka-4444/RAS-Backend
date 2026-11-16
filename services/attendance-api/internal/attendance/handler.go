@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,8 +37,31 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	{
 		att.POST("/check-in", h.checkIn)
 		att.POST("/check-out", h.checkOut)
+		att.GET("/records", h.getRecord)
 		att.PATCH("/deductions/:id", h.adjustDeduction)
 	}
+}
+
+func (h *Handler) getRecord(c *gin.Context) {
+	var query struct {
+		EmployeeID string `form:"employee_id" binding:"required,uuid"`
+		WorkDate   string `form:"work_date" binding:"required"`
+	}
+	if err := c.ShouldBindQuery(&query); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_query", "employee_id must be a UUID and work_date is required")
+		return
+	}
+	date, err := time.Parse(time.DateOnly, query.WorkDate)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_query", "work_date must be YYYY-MM-DD")
+		return
+	}
+	record, err := h.svc.GetRecord(c.Request.Context(), query.EmployeeID, date, c.GetString(CtxUserRole), c.GetString(CtxBranchID))
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, record.ToResponse())
 }
 
 // ============================================================

@@ -89,7 +89,7 @@ func (h *Handler) createMenuItemDirect(c *gin.Context) {
 	}
 
 	item, err := h.svc.CreateMenuItem(c.Request.Context(), CreateMenuItemInput{
-		ActorRole:       getRole(c, req.ActorRole), // ← استبدلي السطر ده
+		ActorRole:       c.GetString(CtxUserRole),
 		SKU:             req.SKU,
 		Name:            req.Name,
 		NameEn:          req.NameEn,
@@ -122,12 +122,17 @@ func (h *Handler) createRequest(c *gin.Context) {
 
 	actorID := c.GetString(CtxUserID)
 	if actorID == "" {
-		actorID = "99999999-9999-9999-9999-999999999999"
+		writeDomainError(c, ErrUnauthorized)
+		return
 	}
-	branchID := req.BranchID
+	role := c.GetString(CtxUserRole)
+	if role != "CEO" && (role != "BRANCH_MANAGER" || c.GetString(CtxBranchID) != req.BranchID) {
+		writeError(c, http.StatusForbidden, "forbidden", "cannot create a menu request for this branch")
+		return
+	}
 
 	mr, err := h.svc.CreateRequest(c.Request.Context(), CreateRequestInput{
-		BranchID:       branchID,
+		BranchID:       req.BranchID,
 		RequestedBy:    actorID,
 		ItemName:       req.ItemName,
 		RequestedPrice: req.RequestedPrice,
@@ -212,7 +217,7 @@ func (h *Handler) rejectRequest(c *gin.Context) {
 
 	mr, err := h.svc.RejectRequest(c.Request.Context(), RejectRequestInput{
 		RequestID: id,
-		ActorRole: getRole(c, req.ActorRole), // ← استبدلي السطر ده
+		ActorRole: c.GetString(CtxUserRole),
 		Reason:    req.Reason,
 	})
 	if err != nil {
@@ -244,16 +249,6 @@ func writeError(c *gin.Context, status int, code, msg string) {
 	c.JSON(status, ErrorResponse{
 		Error: ErrorBody{Code: code, Message: msg},
 	})
-}
-func getRole(c *gin.Context, fallback string) string {
-	role := c.GetString(CtxUserRole)
-	if role == "" {
-		role = fallback
-	}
-	if role == "" {
-		role = "CEO" // افتراضي عشان الاختبار
-	}
-	return role
 }
 
 // @Summary      List Categories
@@ -313,7 +308,7 @@ func (h *Handler) updateMenuItem(c *gin.Context) {
 		return
 	}
 	item, err := h.svc.UpdateMenuItem(c.Request.Context(), UpdateMenuItemInput{
-		ActorRole: getRole(c, req.ActorRole), ID: id,
+		ActorRole: c.GetString(CtxUserRole), ID: id,
 		Name: req.Name, NameEn: req.NameEn,
 		CategoryID: req.CategoryID, SellingPrice: req.SellingPrice,
 		KDSStation: req.KDSStation, PrepTimeMinutes: req.PrepTimeMinutes,

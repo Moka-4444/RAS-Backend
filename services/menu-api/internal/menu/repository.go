@@ -29,7 +29,6 @@ type Repository interface {
 	GetMenuItemRequestByID(ctx context.Context, id string) (*MenuItemRequest, error)
 	ListMenuItemRequests(ctx context.Context) ([]*MenuItemRequest, error)
 	UpdateMenuItemRequest(ctx context.Context, tx *sqlx.Tx, req *MenuItemRequest) error
-	
 }
 
 // ============================================================
@@ -195,18 +194,20 @@ func (r *postgresRepo) UpdateMenuItemRequest(ctx context.Context, tx *sqlx.Tx, r
 	const q = `
 		UPDATE menu_item_requests
 		SET status = $2, rejection_reason = $3, updated_at = $4
-		WHERE id = $1
+		WHERE id = $1 AND status = 'PENDING'
 	`
 	res, err := tx.ExecContext(ctx, q, req.ID, req.Status, req.RejectionReason, req.UpdatedAt)
 	if err != nil {
 		return err
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if rows == 0 {
-		return errors.New("menu request not found")
+		return ErrInvalidStatus
 	}
 	return nil
 }
-
 
 var _ Repository = (*postgresRepo)(nil)

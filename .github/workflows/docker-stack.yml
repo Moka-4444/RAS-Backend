@@ -11,13 +11,14 @@ on:
       - '.env.example'
       - '.github/workflows/docker-stack.yml'
   push:
-    branches: [main]
+    branches: [main, codex/backend-qa-recheck]
     paths:
       - 'deploy/**'
       - 'database/**'
       - 'services/**'
       - 'infra/terraform/dev/**'
       - 'scripts/aws-dev.ps1'
+      - 'tests/integration/**'
       - '.github/workflows/docker-stack.yml'
   workflow_dispatch:
 
@@ -72,6 +73,8 @@ jobs:
           done
       - name: Exercise stock, transfer, supply and sales on the disposable database
         run: python3 tests/integration/feature_write_smoke.py
+      - name: Replay the 50 QA requests
+        run: python3 tests/integration/backend_qa_recheck.py
       - name: Capture service state on failure
         if: failure()
         run: docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml logs --no-color

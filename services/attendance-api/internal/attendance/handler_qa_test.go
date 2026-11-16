@@ -63,6 +63,32 @@ func TestQAAttendanceHandlerPayloadAndDomainErrorResponses(t *testing.T) {
 	attendanceQAAssertError(t, noAdjustment, http.StatusBadRequest, "no_adjustment")
 }
 
+func TestAttendanceRecordExposesDeductionToAuthorizedManager(t *testing.T) {
+	const employeeID = "11111111-1111-4111-8111-111111111111"
+	const path = "/api/v1/attendance/records?employee_id=" + employeeID + "&work_date=2026-10-14"
+	date := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+	repo := &attendanceQARepo{
+		todayRecord: &AttendanceRecord{ID: "attendance-1", EmployeeID: employeeID, BranchID: "branch-a", WorkDate: date},
+		deduction:   &Deduction{ID: "deduction-1", AttendanceID: "attendance-1", OriginalAmount: 50},
+	}
+	authorized := attendanceQAHandlerRouter(t, repo, nil, nil, "BRANCH_MANAGER", "branch-a")
+	response := attendanceQAPerform(authorized, http.MethodGet, path, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	var record AttendanceRecordResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Deduction == nil || record.Deduction.ID != "deduction-1" || record.Deduction.EffectiveAmount != 50 {
+		t.Fatalf("unexpected deduction: %+v", record.Deduction)
+	}
+
+	otherBranch := attendanceQAHandlerRouter(t, repo, nil, nil, "BRANCH_MANAGER", "branch-b")
+	denied := attendanceQAPerform(otherBranch, http.MethodGet, path, "")
+	attendanceQAAssertError(t, denied, http.StatusForbidden, "forbidden")
+}
+
 func TestQAAttendanceHandlerSanitizesInternalErrorsAndMapsAuthorization(t *testing.T) {
 	const internalDetails = "employee database unavailable"
 	failed := attendanceQAPerform(attendanceQAHandlerRouter(t, &attendanceQARepo{}, &attendanceQAEmployee{err: errors.New(internalDetails)}, &attendanceQABranch{}, "CEO", ""), http.MethodPost, "/api/v1/attendance/check-in", `{"employee_id":"11111111-1111-4111-8111-111111111111","source":"manual"}`)

@@ -231,6 +231,27 @@ func (s *Service) CheckOut(ctx context.Context, in CheckOutInput) (*AttendanceRe
 	return open, nil
 }
 
+func (s *Service) GetRecord(ctx context.Context, employeeID string, date time.Time, role, branchID string) (*AttendanceRecord, error) {
+	if role != "CEO" && role != "BRANCH_MANAGER" {
+		return nil, ErrForbiddenAction
+	}
+	record, err := s.repo.GetRecordByDate(ctx, employeeID, date)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, ErrNotCheckedIn
+	}
+	if err := authorizeEmployeeBranch(role, branchID, record.BranchID); err != nil {
+		return nil, err
+	}
+	record.Deduction, err = s.repo.GetDeductionByAttendance(ctx, record.ID)
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
 func authorizeEmployeeBranch(role, actorBranchID, employeeBranchID string) error {
 	switch role {
 	case "CEO":

@@ -59,7 +59,7 @@ func (r *attendanceQARepo) GetDeductionByID(context.Context, string) (*Deduction
 	return r.deduction, r.deductionErr
 }
 func (r *attendanceQARepo) GetDeductionByAttendance(context.Context, string) (*Deduction, error) {
-	return nil, nil
+	return r.deduction, r.deductionErr
 }
 func (r *attendanceQARepo) UpdateDeduction(context.Context, *sqlx.Tx, *Deduction) error {
 	r.updateDedN++

@@ -91,7 +91,14 @@ def verify_supply(api, kitchen, destination, good):
     assert quantity(api, kitchen, good) == 8
     assert quantity(api, destination, good) == 2, "Zero receipt must not increase stock"
     rows = api(9004, "/supply/requests")
-    assert any(row["id"] == request["id"] and row["status"] == "FULFILLED" for row in rows)
+    listed_request = next(row for row in rows if row["id"] == request["id"])
+    assert listed_request["status"] == "FULFILLED"
+    assert len(listed_request["items"]) == 1
+    listed_item = listed_request["items"][0]
+    assert listed_item["id"] == line_id
+    assert listed_item["good_id"] == good
+    assert listed_item["requested_qty"] == listed_item["approved_qty"] == 2
+    assert listed_item["received_qty"] == 0
 
 
 def verify_sales(api, branch, actor):
@@ -105,6 +112,28 @@ def verify_sales(api, branch, actor):
     api(9006, path + "/close", {}, method="PATCH")
     result = api(9006, path + "/summary")
     assert result["status"] == "CLOSED" and Decimal(str(result["gross_sales"])) == 35
+
+
+def verify_menu_review(api, branch):
+    manager = api(9001, "/users", {
+        "name": "CI Menu Manager", "email": "ci-menu-manager@example.test",
+        "password": "DisposableMenuManager9!", "role": "BRANCH_MANAGER", "branch_id": branch,
+    })
+    manager_identity = {
+        "X-User-ID": manager["id"], "X-User-Role": manager["role"], "X-Branch-ID": branch,
+    }
+
+    approved = call(9005, "/menu/requests", {
+        "branch_id": branch, "item_name": "CI Approved Menu Item", "requested_price": 25,
+    }, headers=manager_identity)
+    item = api(9005, f"/menu/requests/{approved['id']}/approve", {"sku": "CI-MENU-APPROVED"}, "PATCH")
+    assert item["name"] == "CI Approved Menu Item" and item["selling_price"] == 25
+
+    rejected = call(9005, "/menu/requests", {
+        "branch_id": branch, "item_name": "CI Rejected Menu Item", "requested_price": 30,
+    }, headers=manager_identity)
+    reviewed = api(9005, f"/menu/requests/{rejected['id']}/reject", {"reason": "CI review"}, "PATCH")
+    assert reviewed["status"] == "REJECTED" and reviewed["rejection_reason"] == "CI review"
 
 
 def main():
@@ -129,6 +158,8 @@ def main():
     print("Supply shipment and zero receipt verified", flush=True)
     verify_sales(api, source, actor)
     print("Sale and closed shift summary verified", flush=True)
+    verify_menu_review(api, source)
+    print("Menu request approval and rejection verified", flush=True)
 
 
 if __name__ == "__main__":
