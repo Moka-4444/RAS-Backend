@@ -129,7 +129,7 @@ resource "aws_apigatewayv2_route" "public_auth" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda_proxy.id}"
 }
 resource "aws_apigatewayv2_route" "protected" {
-  for_each           = toset(["ANY /api/v1/auth/{proxy+}", "ANY /api/v1/users/{proxy+}", "ANY /api/v1/branches/{proxy+}", "ANY /api/v1/employees/{proxy+}", "ANY /api/v1/attendance/{proxy+}", "ANY /api/v1/overtime/{proxy+}", "GET /api/v1/users", "POST /api/v1/users", "GET /api/v1/branches", "POST /api/v1/branches", "GET /api/v1/employees", "POST /api/v1/employees", "GET /api/v1/attendance", "POST /api/v1/attendance", "GET /api/v1/overtime", "POST /api/v1/overtime"])
+  for_each           = toset(["ANY /api/v1/{proxy+}"])
   api_id             = aws_apigatewayv2_api.public.id
   route_key          = each.value
   authorization_type = "CUSTOM"

@@ -5,9 +5,7 @@ on:
     paths:
       - 'deploy/**'
       - 'database/**'
-      - 'services/**/Dockerfile'
-      - 'services/**/go.mod'
-      - 'services/**/go.sum'
+      - 'services/**'
       - '.env.example'
       - '.github/workflows/docker-stack.yml'
   push:
@@ -15,8 +13,9 @@ on:
     paths:
       - 'deploy/**'
       - 'database/**'
-      - 'services/**/Dockerfile'
+      - 'services/**'
       - '.github/workflows/docker-stack.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -72,3 +71,64 @@ jobs:
       - name: Stop disposable stack
         if: always()
         run: docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml down
+  publish-development-images:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: compose-build-and-smoke
+    runs-on: ubuntu-latest
+    environment: development-publish
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repository: ras-auth-api
+            context: services/auth-api
+            dockerfile: services/auth-api/Dockerfile
+          - repository: ras-branch-api
+            context: services/branch-api
+            dockerfile: services/branch-api/Dockerfile
+          - repository: ras-attendance-api
+            context: services/attendance-api
+            dockerfile: services/attendance-api/Dockerfile
+          - repository: ras-menu-api
+            context: services/menu-api
+            dockerfile: services/menu-api/Dockerfile
+          - repository: ras-central-kitchen-api
+            context: services/central-kitchen-supply
+            dockerfile: services/central-kitchen-supply/Dockerfile
+          - repository: ras-inventory-api
+            context: services/inventory-api
+            dockerfile: services/inventory-api/Dockerfile
+          - repository: ras-cost-api
+            context: services/cost-api
+            dockerfile: services/cost-api/Dockerfile
+          - repository: ras-sales-api
+            context: services/sales-api
+            dockerfile: services/sales-api/Dockerfile
+          - repository: ras-transfer-api
+            context: services/transfer-api
+            dockerfile: services/transfer-api/Dockerfile
+          - repository: ras-db-migrations
+            context: .
+            dockerfile: database/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and publish immutable development image
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          REPOSITORY: ${{ matrix.repository }}
+          BUILD_CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          image="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY}:${GITHUB_SHA}"
+          docker build --file "$DOCKERFILE" --tag "$image" "$BUILD_CONTEXT"
+          docker push "$image"

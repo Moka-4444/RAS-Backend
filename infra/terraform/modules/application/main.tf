@@ -1,6 +1,6 @@
 data "aws_caller_identity" "current" {}
 locals {
-  repository_names    = toset(["ras-auth-api", "ras-branch-api", "ras-attendance-api", "ras-db-migrations"])
+  repository_names    = toset(["ras-auth-api", "ras-branch-api", "ras-attendance-api", "ras-menu-api", "ras-central-kitchen-api", "ras-inventory-api", "ras-cost-api", "ras-sales-api", "ras-transfer-api", "ras-db-migrations"])
   ecr_repository_urls = { for name in local.repository_names : name => "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${name}" }
 }
 
@@ -116,6 +116,12 @@ DB_NAME=${var.database_name}
 AUTH_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-auth-api"]}
 BRANCH_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-branch-api"]}
 ATTENDANCE_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-attendance-api"]}
+MENU_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-menu-api"]}
+CENTRAL_KITCHEN_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-central-kitchen-api"]}
+INVENTORY_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-inventory-api"]}
+COST_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-cost-api"]}
+SALES_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-sales-api"]}
+TRANSFER_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-transfer-api"]}
 MIGRATION_IMAGE_REPOSITORY=${local.ecr_repository_urls["ras-db-migrations"]}
 ENVVARS
 chmod 0644 /etc/ras-backend-deploy.env

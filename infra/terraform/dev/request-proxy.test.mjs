@@ -8,16 +8,22 @@ test("routes known API paths to the service ports and forwards request data", as
   process.env.BACKEND_PRIVATE_IP = "10.40.10.12";
 
   const cases = [
-    ["/health", 9001],
-    ["/api/v1/auth/login", 9001],
-    ["/api/v1/users", 9001],
-    ["/api/v1/branches/7", 9002],
-    ["/api/v1/employees/8", 9003],
-    ["/api/v1/attendance", 9003],
-    ["/api/v1/overtime/9", 9003],
+    ["/health", 9001, "/health"],
+    ["/api/v1/auth/login", 9001, "/api/v1/auth/login"],
+    ["/api/v1/users", 9001, "/api/v1/users"],
+    ["/api/v1/branches/7", 9002, "/api/v1/branches/7"],
+    ["/api/v1/employees/8", 9003, "/api/v1/employees/8"],
+    ["/api/v1/attendance", 9003, "/api/v1/attendance"],
+    ["/api/v1/overtime/9", 9003, "/api/v1/overtime/9"],
+    ["/api/v1/menu/items", 9005, "/api/v1/menu/items"],
+    ["/api/v1/central-kitchen/supply/requests", 9004, "/api/v1/supply/requests"],
+    ["/api/v1/stock/movements", 9010, "/api/v1/inventory/movements"],
+    ["/api/v1/cost/items/123", 9007, "/api/v1/cost/items/123"],
+    ["/api/v1/sales/shifts/open", 9006, "/api/v1/sales/shifts/open"],
+    ["/api/v1/transfers/stats", 9008, "/api/v1/transfers/stats"],
   ];
 
-  for (const [path, port] of cases) {
+  for (const [path, port, upstreamPath] of cases) {
     let forwarded;
     globalThis.fetch = async (url, options) => {
       forwarded = { url: String(url), options };
@@ -27,14 +33,27 @@ test("routes known API paths to the service ports and forwards request data", as
     const response = await handler({
       rawPath: path,
       rawQueryString: "page=2",
-      headers: { authorization: "Bearer example-token", host: "gateway.invalid" },
-      requestContext: { http: { method: "GET" }, requestId: "request-123" },
+      headers: {
+        authorization: "Bearer example-token",
+        host: "gateway.invalid",
+        "x-user-id": "spoofed-user",
+        "x-user-role": "CEO",
+        "x-branch-id": "spoofed-branch",
+      },
+      requestContext: {
+        http: { method: "GET" },
+        requestId: "request-123",
+        authorizer: { lambda: { sub: "user-123", role: "BRANCH_MANAGER", branch_id: "branch-123" } },
+      },
     });
 
-    assert.equal(forwarded.url, `http://10.40.10.12:${port}${path}?page=2`);
+    assert.equal(forwarded.url, `http://10.40.10.12:${port}${upstreamPath}?page=2`);
     assert.equal(forwarded.options.headers.authorization, "Bearer example-token");
     assert.equal(forwarded.options.headers.host, undefined);
     assert.equal(forwarded.options.headers["x-request-id"], "request-123");
+    assert.equal(forwarded.options.headers["x-user-id"], "user-123");
+    assert.equal(forwarded.options.headers["x-user-role"], "BRANCH_MANAGER");
+    assert.equal(forwarded.options.headers["x-branch-id"], "branch-123");
     assert.equal(response.statusCode, 200);
     assert.equal(Buffer.from(response.body, "base64").toString(), "ok");
   }

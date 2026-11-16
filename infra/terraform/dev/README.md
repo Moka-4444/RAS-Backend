@@ -4,7 +4,9 @@ This disposable development stack is designed around AWS services that have Free
 
 ## Request and network path
 
-Flutter → API Gateway HTTP API → Lambda HS256 authorizer (protected routes) → VPC-attached Lambda request proxy → private IP of one EC2 Docker host → private RDS PostgreSQL. The proxy Lambda can connect only to EC2 ports 9001–9003. The EC2 host has an automatically assigned public IPv4 only for outbound package/ECR pulls and SSM management; its security group allows application ports only from the proxy Lambda security group, with no public inbound rule. RDS is in private subnets and accepts PostgreSQL only from the application host security group.
+Flutter → API Gateway HTTP API → Lambda HS256 authorizer (protected routes) → VPC-attached Lambda request proxy → private IP of one EC2 Docker host → private RDS PostgreSQL. The proxy Lambda can connect only to the app ports 9001–9008 and 9010 on the EC2 host; the host security group allows those ports only from the proxy Lambda security group, with no public inbound rule. RDS is in private subnets and accepts PostgreSQL only from the application host security group. The authorizer's verified `sub`, `role`, and `branch_id` claims are forwarded as `X-User-ID`, `X-User-Role`, and `X-Branch-ID` for feature handlers.
+
+Gateway route namespaces map to the services as follows: Auth `/api/v1/auth` and `/api/v1/users`; Branch `/api/v1/branches`; Attendance `/api/v1/employees`, `/api/v1/attendance`, and `/api/v1/overtime`; Menu `/api/v1/menu/*` (rewritten to the Menu API's `/api/v1/*`); Central Kitchen `/api/v1/central-kitchen/*` (prefix removed); Inventory `/api/v1/stock/*` (rewritten to `/api/v1/inventory/*`); Cost `/api/v1/cost/*`; Sales `/api/v1/sales/*`; Transfer `/api/v1/transfers/*`.
 
 The design removes NAT Gateway, ALB, API Gateway VPC Link, Secrets Manager, custom KMS keys, CloudWatch log groups, and RDS snapshots/backups. Lambda and API Gateway use their published request allowances. ECR keeps one image per repository and the **combined** private image storage must stay below 500 MB. Standard Parameter Store SecureString is used with the AWS-managed SSM key. Do not change parameters to Advanced tier or add paid VPC endpoints, NAT, load balancers, custom domains, WAF, or log ingestion under this Free Tier-only deployment.
 
@@ -14,7 +16,7 @@ The design removes NAT Gateway, ALB, API Gateway VPC Link, Secrets Manager, cust
 - RDS PostgreSQL: single-AZ `db.t4g.micro`, 20 GiB gp2, private, automated backups disabled for this disposable test, no final snapshot. **Destroying the stack permanently deletes its development data.**
 - API Gateway HTTP API: keep below the account's one-million-call monthly offer while eligible.
 - Lambda: authorizer plus proxy share the request and compute allowance. Each protected request invokes both; no reserved concurrency is configured because this account requires at least 10 unreserved executions.
-- ECR private repositories: retain one image per repo and verify total stored image size is below 500 MB before publishing.
+- ECR private repositories: ten repositories (nine APIs plus the migration runner); retain one image per repo and verify total stored image size is below 500 MB before publishing.
 - SSM Parameter Store: Standard SecureString only; no Advanced parameters or customer-managed KMS keys.
 - Terraform state: use the secured, versioned S3 bucket `ras-backend-tfstate-109573999710-eu-west-3`; keep it separate and do not destroy it with this stack.
 
@@ -44,7 +46,7 @@ Set-Location C:\Users\myfin\OneDrive\Desktop\RAS-backend
 .\scripts\aws-dev.ps1 up
 ```
 
-The command initializes and reviews Terraform, applies only a non-destructive plan, builds and publishes immutable commit-tagged ECR images, waits for SSM, runs migrations once, deploys the three APIs, and checks gateway health.
+The command initializes the documented S3 state key `ras-backend/dev/terraform.tfstate`, reviews Terraform, refuses plans containing resource deletion or replacement, builds and publishes immutable commit-tagged images for all nine APIs plus the migration runner, updates the EC2 deployment helper through SSM, runs role bootstrap and migrations once, deploys all nine APIs, and checks service and gateway health.
 
 To terminate the disposable development environment:
 
@@ -90,7 +92,7 @@ deleting existing rows.
 
 ## Bootstrap and cleanup behavior
 
-The app host is managed through SSM Session Manager. The lifecycle command uses the host's `ras-backend-deploy.sh migrate <commit-sha>` command once, then deploys each API by its immutable image SHA. The API Gateway and all three services were smoke-tested on 2026-10-14. This is a disposable, single-host test environment with no host-level HA.
+The app host is managed through SSM Session Manager. The lifecycle command uses the host's `ras-backend-deploy.sh migrate <commit-sha>` command once, then deploys each API by its immutable image SHA and waits for its local health endpoint. The first three services were smoke-tested on 2026-10-14; the feature-expanded nine-service cloud rollout is tracked separately from the passing GitHub Compose smoke. This is a disposable, single-host test environment with no host-level HA.
 
 The database and application passwords are stored as Standard SecureString SSM parameters. Terraform state also contains sensitive values; keep the encrypted server-side state and DPAPI laptop backup private. Back up state after a successful apply and again after destroy. Do not print secret parameter values.
 

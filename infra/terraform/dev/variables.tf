@@ -13,11 +13,11 @@ variable "app_secret_json" {
   description = "Local-only JSON with JWT_SECRET, per-service DB passwords, and bootstrap CEO credentials; stored as SSM Standard SecureString."
   validation {
     condition = can(jsondecode(var.app_secret_json)) && alltrue([
-      for key in ["JWT_SECRET", "AUTH_DB_PASSWORD", "BRANCH_DB_PASSWORD", "ATTENDANCE_DB_PASSWORD", "SEED_CEO_EMAIL", "SEED_CEO_PASSWORD"] : try(length(jsondecode(var.app_secret_json)[key]) > 0, false)
+      for key in ["JWT_SECRET", "AUTH_DB_PASSWORD", "BRANCH_DB_PASSWORD", "ATTENDANCE_DB_PASSWORD", "MENU_DB_PASSWORD", "CENTRAL_KITCHEN_DB_PASSWORD", "INVENTORY_DB_PASSWORD", "COST_DB_PASSWORD", "SALES_DB_PASSWORD", "TRANSFER_DB_PASSWORD", "SEED_CEO_EMAIL", "SEED_CEO_PASSWORD"] : try(length(jsondecode(var.app_secret_json)[key]) > 0, false)
       ]) && try(
       can(regex("^[A-Za-z0-9._~-]{32,}$", jsondecode(var.app_secret_json).JWT_SECRET)) &&
       alltrue([
-        for key in ["AUTH_DB_PASSWORD", "BRANCH_DB_PASSWORD", "ATTENDANCE_DB_PASSWORD", "SEED_CEO_PASSWORD"] :
+        for key in ["AUTH_DB_PASSWORD", "BRANCH_DB_PASSWORD", "ATTENDANCE_DB_PASSWORD", "MENU_DB_PASSWORD", "CENTRAL_KITCHEN_DB_PASSWORD", "INVENTORY_DB_PASSWORD", "COST_DB_PASSWORD", "SALES_DB_PASSWORD", "TRANSFER_DB_PASSWORD", "SEED_CEO_PASSWORD"] :
         can(regex("^[A-Za-z0-9._~@-]+$", jsondecode(var.app_secret_json)[key]))
       ]) &&
       can(regex("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$", jsondecode(var.app_secret_json).SEED_CEO_EMAIL))

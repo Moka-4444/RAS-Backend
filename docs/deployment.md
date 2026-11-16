@@ -38,7 +38,7 @@ The example file contains placeholders and must not be applied. Before apply, co
 
 ## Publish and deploy
 
-The four immutable images tagged `1c3e5c8ad19c5add7bd25f617f0796dc82c9e0aa` were published to ECR. Their combined repository storage is subject to the account's Free Plan allowance. GitHub image publishing remains separate and requires the documented OIDC role and repository variables.
+Historical note: four immutable images tagged `1c3e5c8ad19c5add7bd25f617f0796dc82c9e0aa` were published to ECR in the earlier three-API deployment. The current integrated plan adds six API repositories and deploys all nine services; keep combined repository storage within the account's eligible allowance.
 
 The deployment script builds the migration connection string from the URL-safe RDS credentials retrieved from SSM. The EC2 bootstrap installs the PostgreSQL client required by the deployment tooling, and temporary migration environment files are removed by an exit trap. If ECR repositories were created outside the current Terraform state, import each existing repository before applying so Terraform does not attempt to recreate it.
 

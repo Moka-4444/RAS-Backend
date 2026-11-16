@@ -55,7 +55,7 @@ module "database" {
 
 resource "aws_ssm_parameter" "application_secrets" {
   name        = "/ras-backend/dev/application-secrets"
-  description = "Development runtime credentials for the three backend applications and JWT authorizer"
+  description = "Development runtime credentials for all nine backend APIs and JWT authorizer"
   type        = "SecureString"
   tier        = "Standard"
   value       = var.app_secret_json
