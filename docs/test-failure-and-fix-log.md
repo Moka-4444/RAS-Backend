@@ -166,3 +166,11 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Route `/api/v1/reports` and descendants to port 9009, preserving the path; added the Reports sales endpoint to the proxy forwarding test matrix.
 - **Retest:** `node --test infra/terraform/dev/request-proxy.test.mjs` rerun and fresh PR CI pending.
 - **Prevention:** Every newly deployed API must have an API Gateway route mapping and a proxy test in addition to its container health check.
+### TF-021 — Reports Compose DSN did not encode password characters
+
+- **Test type:** Deployment configuration review and Docker Compose interpolation validation.
+- **Symptom:** Reports Compose built `DATABASE_URL` by string interpolation. A password containing `@` (allowed by Terraform validation) could be parsed as URL authority syntax and fail database authentication.
+- **Cause:** The Reports API already supports individual `DB_*` variables and encodes credentials with `url.UserPassword`, but Compose bypassed that safe path.
+- **Fix:** Pass `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSLMODE` to Reports in Compose so the service builds the DSN safely.
+- **Retest:** Compose config validation and the combined ten-service Compose smoke are pending on the latest PR commit.
+- **Prevention:** Pass credentials as structured environment fields and use standard URL constructors; avoid embedding raw secrets in DSN strings.
