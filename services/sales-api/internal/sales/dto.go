@@ -39,7 +39,9 @@ type CancelDiscountRequest struct {
 
 // CloseShiftRequest - إغلاق الوردية
 type CloseShiftRequest struct {
-	ShiftID string `json:"shift_id" binding:"required,uuid"`
+	ShiftID   string `json:"shift_id" binding:"required,uuid"`
+	ActorID   string `json:"-"`
+	ActorRole string `json:"-"`
 }
 
 // ============================================================

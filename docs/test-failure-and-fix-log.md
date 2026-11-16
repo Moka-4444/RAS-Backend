@@ -120,4 +120,16 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Retest:** Reports API `go test ./...` passed after handler changes. Fresh migration/privilege validation and full ten-service Compose smoke are pending.
 - **Prevention:** Every new runtime role must get its password from the same environment variable in local Compose, CI, and cloud deployment; every reporting query must have an explicit authorization/scope rule and corresponding handler and database tests; full-stack health loops must cover every service port.
 
+### TF-016 — Audit actor attribution and transactional integrity
+
+- **Affected branch/services:** `feature/audit-integration`; Sales, Menu, Central Kitchen Supply.
+- **Environment/commit/date:** Local repair branch based on PR #27 head `177a799`; Windows amd64, Go 1.27.2; 2026-11-16.
+- **Severity/status:** High; fixes implemented and targeted module tests pass; full combined suite and CI pending.
+- **Test types:** Code review, unit/service tests, handler/API validation, transaction failure-path tests.
+- **Reproduction/evidence:** Review of PR #27 found Sales shift closure logged `shift.ManagerID` as the actor, Menu approval logged `req.RequestedBy`, and supply approval/rejection/receipt logged the requester; shipment logged a hardcoded central-kitchen UUID. Sales and all four supply operations logged audit insert errors and still committed their business transactions. Audit routes also accepted role fallbacks from request payloads and did not require an authenticated actor ID.
+- **Expected/actual impact:** Audit history could identify the wrong person, omit a real approver/receiver, or record a service placeholder as the actor. A successful business write could commit without a corresponding audit event, weakening traceability.
+- **Fix:** Populate audit actor ID and role only from the trusted authenticated request context; validate the actor UUID; reject unauthenticated/unauthorized audit actions; use the actual actor for inventory movement metadata; return audit write failures before commit so transaction rollback preserves atomicity. Add tests that verify actor identity and that audit insert failures roll back Sales and Supply transactions; add Menu tests for CEO and actor ID requirements.
+- **Retest:** `go test ./...` passed in Sales, Menu, and Central Kitchen Supply modules after the fixes. Full combined run is pending.
+- **Prevention:** Audit event columns must come from authenticated claims, never the record creator or request body. For audited mutations, the business update and audit insert must share one transaction and the audit insert must be required for commit.
+
 

@@ -113,8 +113,14 @@ func (h *Handler) openShift(c *gin.Context) {
 // @Router       /sales/shifts/{id}/close [patch]
 func (h *Handler) closeShift(c *gin.Context) {
 	id := c.Param("id")
+	actorID := c.GetString(CtxUserID)
+	actorRole := c.GetString(CtxUserRole)
+	if actorID == "" || actorRole == "" {
+		writeError(c, http.StatusUnauthorized, "unauthorized", "authenticated user context is required")
+		return
+	}
 
-	shift, err := h.svc.CloseShift(c.Request.Context(), CloseShiftRequest{ShiftID: id})
+	shift, err := h.svc.CloseShift(c.Request.Context(), CloseShiftRequest{ShiftID: id, ActorID: actorID, ActorRole: actorRole})
 	if err != nil {
 		writeDomainError(c, err)
 		return

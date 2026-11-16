@@ -174,10 +174,17 @@ func (h *Handler) approveRequest(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_payload", err.Error())
 		return
 	}
+	actorID := c.GetString(CtxUserID)
+	actorRole := c.GetString(CtxUserRole)
+	if actorID == "" || actorRole == "" {
+		writeError(c, http.StatusUnauthorized, "unauthorized", "authenticated user context is required")
+		return
+	}
 
 	item, err := h.svc.ApproveRequest(c.Request.Context(), ApproveRequestInput{
 		RequestID: id,
-		ActorRole: getRole(c, req.ActorRole), // ← استبدلي السطر ده
+		ActorID:   actorID,
+		ActorRole: actorRole,
 		SKU:       req.SKU,
 	})
 	if err != nil {
