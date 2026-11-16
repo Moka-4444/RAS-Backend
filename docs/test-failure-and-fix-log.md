@@ -108,6 +108,18 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Evidence:** [Full Compose Actions run](https://github.com/NorthstarEngineering/RAS-Backend/actions/runs/43733645153); [PR #24](https://github.com/NorthstarEngineering/RAS-Backend/pull/24).
 - **Remaining coverage boundary:** This verifies deployment startup, DB migrations/roles, and API liveness. It does not execute authenticated business transactions through every feature API or validate an external mobile app repository. Those remain separate integration coverage items.
 
+### TF-015 — Reports API CI credentials, database privileges, and branch scope
+
+- **Affected branch/service:** `feature/reports-api`, Reports API, database bootstrap and migrations, Docker stack and database CI workflows.
+- **Environment/commit/date:** Local repair branch based on PR #26 head `ee6a6e5`; Windows amd64, Go 1.27.2; 2026-11-16.
+- **Severity/status:** High; fix implemented, full migration and combined-stack retest pending.
+- **Test types:** CI failure diagnosis, handler/API authorization, Go unit tests, database role/migration integration, Docker runtime smoke.
+- **Reproduction/evidence:** PR #26 Docker stack validation run `43745690720` failed before Compose startup because its generated `.env` omitted required `REPORTS_DB_PASSWORD`. After fixing that, run `43823503673` revealed the Reports Dockerfile used Go 1.23.12 while the module requires Go 1.27.2. Inspection also found `roles.sql` hardcoded `reports_ci_password`, the smoke health loop skipped port 9009, Reports had no tests, reporting tables lacked SELECT grants for `reports_app`, and branch/query filters were not enforced by handlers. Reports attendance SQL counted `open` as absent even though an open record represents a successful check-in.
+- **Expected/actual impact:** A fresh stack could fail during role bootstrap or use credentials different from the API; report endpoints could fail on permission denied; branch managers could request cross-branch sales/inventory data; reports queries could return incorrect or unscoped counts.
+- **Fix:** Use `REPORTS_DB_PASSWORD` for create and alter role operations and enforce restricted role attributes; add the credential to both CI workflows; health-check port 9009; align the Reports builder with Go 1.27.2 and its matching static build; grant `reports_app` read-only access to report source tables; require CEO/branch-manager/supply-manager role as appropriate and force branch-manager scope from trusted auth context; scope sales, inventory, attendance, and approval SQL; fix attendance/overtime aggregations; safely encode database URL credentials and support configured SSL mode; add handler tests for authentication, branch scope, and audit role restrictions plus integration checks for read-only grants.
+- **Retest:** Reports API `go test ./...` passed after handler changes. Fresh migration/privilege validation and full ten-service Compose smoke are pending.
+- **Prevention:** Every new runtime role must get its password from the same environment variable in local Compose, CI, and cloud deployment; every reporting query must have an explicit authorization/scope rule and corresponding handler and database tests; full-stack health loops must cover every service port.
+
 ### TF-016 — Audit actor attribution and transactional integrity
 
 - **Affected branch/services:** `feature/audit-integration`; Sales, Menu, Central Kitchen Supply.
@@ -120,18 +132,6 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Retest:** `go test ./...` passed in Sales, Menu, and Central Kitchen Supply modules after the fixes. Full combined run is pending.
 - **Prevention:** Audit event columns must come from authenticated claims, never the record creator or request body. For audited mutations, the business update and audit insert must share one transaction and the audit insert must be required for commit.
 
-
-### TF-015 — Reports API CI credentials, database privileges, and branch scope
-
-- **Affected branch/service:** `feature/reports-api`, Reports API, database bootstrap and migrations, Docker stack and database CI workflows.
-- **Environment/commit/date:** Local repair branch based on PR #26 head `ee6a6e5`; Windows amd64, Go 1.27.2; 2026-11-16.
-- **Severity/status:** High; fix implemented, full migration and combined-stack retest pending.
-- **Test types:** CI failure diagnosis, handler/API authorization, Go unit tests, database role/migration integration, Docker runtime smoke.
-- **Reproduction/evidence:** PR #26 Docker stack validation run `43745690720` failed before Compose startup because its generated `.env` omitted required `REPORTS_DB_PASSWORD`. After fixing that, run `43823503673` revealed the Reports Dockerfile used Go 1.23.12 while the module requires Go 1.27.2. Inspection also found `roles.sql` hardcoded `reports_ci_password`, the smoke health loop skipped port 9009, Reports had no tests, reporting tables lacked SELECT grants for `reports_app`, and branch/query filters were not enforced by handlers. Reports attendance SQL counted `open` as absent even though an open record represents a successful check-in.
-- **Expected/actual impact:** A fresh stack could fail during role bootstrap or use credentials different from the API; report endpoints could fail on permission denied; branch managers could request cross-branch sales/inventory data; reports queries could return incorrect or unscoped counts.
-- **Fix:** Use `REPORTS_DB_PASSWORD` for create and alter role operations and enforce restricted role attributes; add the credential to both CI workflows; health-check port 9009; align the Reports builder with Go 1.27.2 and its matching static build; grant `reports_app` read-only access to report source tables; require CEO/branch-manager/supply-manager role as appropriate and force branch-manager scope from trusted auth context; scope sales, inventory, attendance, and approval SQL; fix attendance/overtime aggregations; safely encode database URL credentials and support configured SSL mode; add handler tests for authentication, branch scope, and audit role restrictions plus integration checks for read-only grants.
-- **Retest:** Reports API `go test ./...` passed after handler changes. Fresh migration/privilege validation and full ten-service Compose smoke are pending.
-- **Prevention:** Every new runtime role must get its password from the same environment variable in local Compose, CI, and cloud deployment; every reporting query must have an explicit authorization/scope rule and corresponding handler and database tests; full-stack health loops must cover every service port.
 
 
 ### TF-017 — AWS deploy automation and complete service matrix

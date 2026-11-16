@@ -64,6 +64,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON shifts, sales, sale_items, discounts TO 
 GRANT SELECT, INSERT, UPDATE, DELETE ON transfers, transfer_events TO transfer_app;
 GRANT USAGE, SELECT ON SEQUENCE inventory_reference_seq TO inventory_app, central_kitchen_app, transfer_app;
 GRANT SELECT ON branches, goods, menu_items TO transfer_app, cost_app, sales_app, inventory_app, central_kitchen_app;
+GRANT SELECT ON goods, inventories, sales, supply_requests TO reports_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON menu_items, categories TO sales_app;
 
 -- +goose Down

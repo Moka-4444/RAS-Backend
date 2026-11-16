@@ -1,0 +1,177 @@
+basePath: /api/v1
+definitions:
+  reports.ApprovalQueueResponse:
+    properties:
+      pending_menu_requests:
+        type: integer
+      pending_supply_requests:
+        type: integer
+    type: object
+  reports.AttendanceReportResponse:
+    properties:
+      absent:
+        type: integer
+      present:
+        type: integer
+      total_employees:
+        type: integer
+      total_overtime:
+        type: number
+    type: object
+  reports.AuditLogResponse:
+    properties:
+      action:
+        type: string
+      actor_id:
+        type: string
+      actor_role:
+        type: string
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      reason:
+        type: string
+    type: object
+  reports.InventoryReportResponse:
+    properties:
+      low_stock_items:
+        type: integer
+      total_items:
+        type: integer
+      total_value:
+        type: number
+    type: object
+  reports.SalesReportResponse:
+    properties:
+      average_order:
+        type: number
+      delivery_sales:
+        type: number
+      restaurant_sales:
+        type: number
+      total_orders:
+        type: integer
+      total_revenue:
+        type: number
+    type: object
+host: localhost:9009
+info:
+  contact: {}
+  description: Reports and Audit API.
+  title: Reports API
+  version: "1.0"
+paths:
+  /reports/approvals:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.ApprovalQueueResponse'
+      summary: Get Approval Queue
+      tags:
+      - Reports
+  /reports/attendance:
+    get:
+      parameters:
+      - description: From date
+        in: query
+        name: from
+        type: string
+      - description: To date
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.AttendanceReportResponse'
+      summary: Get Attendance Report
+      tags:
+      - Reports
+  /reports/audit:
+    get:
+      parameters:
+      - description: Filter by action
+        in: query
+        name: action
+        type: string
+      - description: Filter by entity type
+        in: query
+        name: entity_type
+        type: string
+      - default: 50
+        description: Limit
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/reports.AuditLogResponse'
+            type: array
+      summary: Get Audit Logs
+      tags:
+      - Reports
+  /reports/inventory:
+    get:
+      parameters:
+      - description: Filter by branch ID
+        in: query
+        name: branch_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.InventoryReportResponse'
+      summary: Get Inventory Report
+      tags:
+      - Reports
+  /reports/sales:
+    get:
+      parameters:
+      - description: Filter by branch ID
+        in: query
+        name: branch_id
+        type: string
+      - description: From date (YYYY-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: To date (YYYY-MM-DD)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.SalesReportResponse'
+      summary: Get Sales Report
+      tags:
+      - Reports
+swagger: "2.0"

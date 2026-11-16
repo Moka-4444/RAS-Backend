@@ -162,7 +162,7 @@ func TestSupplyRequestRoleAuthorization(t *testing.T) {
 	})
 
 	t.Run("branch manager cannot ship", func(t *testing.T) {
-		err := s.ShipSupplyRequest(ctx, "BRANCH_MANAGER", "request-1")
+		err := s.ShipSupplyRequest(ctx, "", "BRANCH_MANAGER", "request-1")
 		if !errors.Is(err, ErrForbiddenAction) {
 			t.Fatalf("expected ErrForbiddenAction, got %v", err)
 		}

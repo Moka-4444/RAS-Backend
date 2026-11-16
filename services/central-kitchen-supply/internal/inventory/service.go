@@ -262,6 +262,7 @@ func (s *Service) ListSupplyRequests(ctx context.Context) ([]*SupplyRequest, err
 
 type ApproveSupplyRequestInput struct {
 	RequestID string
+	ActorID   string
 	ActorRole string
 	Items     []ApproveItemInput
 }
@@ -274,6 +275,9 @@ type ApproveItemInput struct {
 func (s *Service) ApproveSupplyRequest(ctx context.Context, in ApproveSupplyRequestInput) (*SupplyRequest, error) {
 	if in.ActorRole != "SUPPLY_MANAGER" && in.ActorRole != "CEO" {
 		return nil, ErrForbiddenAction
+	}
+	if _, err := uuid.Parse(in.ActorID); err != nil {
+		return nil, errors.New("authenticated actor ID is required")
 	}
 	for _, item := range in.Items {
 		if _, err := uuid.Parse(item.ItemID); err != nil || item.ApprovedQty < 0 {
@@ -314,6 +318,15 @@ func (s *Service) ApproveSupplyRequest(ctx context.Context, in ApproveSupplyRequ
 	}
 	req.Status = "APPROVED"
 
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'APPROVE', 'SUPPLY_REQUEST', $3, 'Supply request approved')
+	`, in.ActorID, in.ActorRole, req.ID)
+	if auditErr != nil {
+		return nil, fmt.Errorf("write approval audit log: %w", auditErr)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -322,6 +335,7 @@ func (s *Service) ApproveSupplyRequest(ctx context.Context, in ApproveSupplyRequ
 
 type RejectSupplyRequestInput struct {
 	RequestID string
+	ActorID   string
 	ActorRole string
 	Reason    string
 }
@@ -332,6 +346,9 @@ func (s *Service) RejectSupplyRequest(ctx context.Context, in RejectSupplyReques
 	}
 	if in.Reason == "" {
 		return nil, errors.New("rejection reason is required")
+	}
+	if _, err := uuid.Parse(in.ActorID); err != nil {
+		return nil, errors.New("authenticated actor ID is required")
 	}
 
 	req, err := s.repo.GetSupplyRequestByID(ctx, in.RequestID)
@@ -360,6 +377,15 @@ func (s *Service) RejectSupplyRequest(ctx context.Context, in RejectSupplyReques
 		return nil, err
 	}
 
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'REJECT', 'SUPPLY_REQUEST', $3, $4)
+	`, in.ActorID, in.ActorRole, req.ID, in.Reason)
+	if auditErr != nil {
+		return nil, fmt.Errorf("write rejection audit log: %w", auditErr)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -370,9 +396,12 @@ func (s *Service) RejectSupplyRequest(ctx context.Context, in RejectSupplyReques
 // 5. Supply Requests (Ship)
 // ============================================================
 
-func (s *Service) ShipSupplyRequest(ctx context.Context, actorRole, requestID string) error {
+func (s *Service) ShipSupplyRequest(ctx context.Context, actorID, actorRole, requestID string) error {
 	if actorRole != "SUPPLY_MANAGER" && actorRole != "CEO" {
 		return ErrForbiddenAction
+	}
+	if _, err := uuid.Parse(actorID); err != nil {
+		return errors.New("authenticated actor ID is required")
 	}
 
 	req, err := s.repo.GetSupplyRequestByID(ctx, requestID)
@@ -416,7 +445,7 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorRole, requestID st
 				Type:        TypeOut,
 				Quantity:    *item.ApprovedQty,
 				Reason:      "Supply Shipment to Branch",
-				CreatedBy:   req.CreatedBy,
+				CreatedBy:   actorID,
 				CreatedAt:   time.Now().UTC(),
 			}
 			if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
@@ -428,6 +457,16 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorRole, requestID st
 	if err := s.repo.UpdateSupplyRequestStatus(ctx, tx, req.ID, "SHIPPED"); err != nil {
 		return err
 	}
+
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'SHIP', 'SUPPLY_REQUEST', $3, 'Supply request shipped')
+	`, actorID, actorRole, req.ID)
+	if auditErr != nil {
+		return fmt.Errorf("write shipment audit log: %w", auditErr)
+	}
+
 	return tx.Commit()
 }
 
@@ -437,6 +476,7 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorRole, requestID st
 
 type ReceiveSupplyRequestInput struct {
 	RequestID string
+	ActorID   string
 	ActorRole string
 	Items     []ReceiveItemInput
 }
@@ -449,6 +489,9 @@ type ReceiveItemInput struct {
 func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequestInput) error {
 	if in.ActorRole != "BRANCH_MANAGER" && in.ActorRole != "CEO" {
 		return ErrForbiddenAction
+	}
+	if _, err := uuid.Parse(in.ActorID); err != nil {
+		return errors.New("authenticated actor ID is required")
 	}
 	for _, item := range in.Items {
 		if _, err := uuid.Parse(item.ItemID); err != nil || item.ReceivedQty < 0 {
@@ -505,7 +548,7 @@ func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequ
 
 			mov := &InventoryMovement{
 				ID: uuid.NewString(), InventoryID: inv.ID, Type: TypeIn,
-				Quantity: receivedQty, Reason: "Supply Received", CreatedBy: req.CreatedBy, CreatedAt: time.Now().UTC(),
+				Quantity: receivedQty, Reason: "Supply Received", CreatedBy: in.ActorID, CreatedAt: time.Now().UTC(),
 			}
 			if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
 				return err
@@ -521,5 +564,15 @@ func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequ
 	if err := s.repo.UpdateSupplyRequestStatus(ctx, tx, req.ID, "FULFILLED"); err != nil {
 		return err
 	}
+
+	// Audit Log
+	_, auditErr := tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
+		VALUES (gen_random_uuid(), $1, $2, 'RECEIVE', 'SUPPLY_REQUEST', $3, 'Supply request received')
+	`, in.ActorID, in.ActorRole, req.ID)
+	if auditErr != nil {
+		return fmt.Errorf("write receipt audit log: %w", auditErr)
+	}
+
 	return tx.Commit()
 }
