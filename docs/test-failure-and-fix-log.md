@@ -150,3 +150,11 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Removed those obsolete imported suites instead of weakening authenticated actor requirements or audit transaction behavior. Kept the integrated audit-focused tests (`audit_test.go`, `rass93_qa_test.go`) and the existing feature QA tests.
 - **Retest:** Fresh combined Go and feature-service workflows are running on PR #28 after removal. Do not treat the earlier candidate run as green.
 - **Prevention:** When salvaging tests from older branches, update auth context and transaction fakes to match current audited contracts, then run them with the complete module suite before retaining them.
+### TF-019 — AWS deployment identity and Terraform example inputs are not provisioned
+
+- **Test type:** GitHub environment and secret inventory, AWS STS identity check, Terraform variable validation.
+- **Symptom:** The repository has no `development-publish` environment variables or secrets, and `aws sts get-caller-identity` returns exit 255 in the current machine. The Terraform example also omitted `REPORTS_DB_PASSWORD`, which the application-secret validation now requires.
+- **Cause:** AWS OIDC role bootstrap and its region/role variables have not been provisioned in this repository/account context; there is no AWS CLI credential available to initialize infrastructure or write GitHub environment variables. The sample secrets JSON had not been extended when Reports was added.
+- **Fix:** Added `REPORTS_DB_PASSWORD` to the Terraform example. The deployment workflow uses GitHub OIDC and the Terraform-managed role without static AWS keys; its required variables are `AWS_ROLE_TO_ASSUME` and `AWS_REGION` in the `development-publish` environment.
+- **Verification/status:** Terraform validate passes. Live infrastructure apply, ECR publish, and service deployment cannot start until a bootstrap AWS identity creates/applies the OIDC deployment role and the two environment variables point to it and `eu-west-3`.
+- **Prevention:** Verify AWS STS and GitHub environment prerequisites before triggering a cloud rollout; keep the sample secret schema synchronized with every runtime role; never claim cloud deployment based on CI-only container smoke.
