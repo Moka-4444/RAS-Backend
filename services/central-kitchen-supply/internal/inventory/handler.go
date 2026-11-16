@@ -65,6 +65,31 @@ func getRole(c *gin.Context, fallback string) string {
 	return role
 }
 
+func requireAuditActor(c *gin.Context, allowedRoles ...string) (string, string, bool) {
+	actorID := c.GetString(CtxUserID)
+	actorRole := c.GetString(CtxUserRole)
+	if actorRole == "" {
+		writeError(c, http.StatusUnauthorized, "unauthorized", "authenticated user context is required")
+		return "", "", false
+	}
+	allowed := false
+	for _, role := range allowedRoles {
+		if actorRole == role || actorRole == "CEO" {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		writeError(c, http.StatusForbidden, "forbidden", "role is not allowed to perform this action")
+		return "", "", false
+	}
+	if actorID == "" {
+		writeError(c, http.StatusUnauthorized, "unauthorized", "authenticated user context is required")
+		return "", "", false
+	}
+	return actorID, actorRole, true
+}
+
 func writeError(c *gin.Context, status int, code, msg string) {
 	c.JSON(status, ErrorResponse{
 		Error: ErrorBody{
@@ -300,15 +325,18 @@ func (h *Handler) approveSupplyRequest(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_payload", err.Error())
 		return
 	}
+	actorID, actorRole, ok := requireAuditActor(c, "SUPPLY_MANAGER")
+	if !ok {
+		return
+	}
 
-	actorRole := getRole(c, req.ActorRole)
 	var appItems []ApproveItemInput
 	for _, i := range req.Items {
 		appItems = append(appItems, ApproveItemInput{ItemID: i.ItemID, ApprovedQty: i.ApprovedQty})
 	}
 
 	sr, err := h.svc.ApproveSupplyRequest(c.Request.Context(), ApproveSupplyRequestInput{
-		RequestID: id, ActorRole: actorRole, Items: appItems,
+		RequestID: id, ActorID: actorID, ActorRole: actorRole, Items: appItems,
 	})
 	if err != nil {
 		writeDomainError(c, err)
@@ -326,12 +354,12 @@ func (h *Handler) approveSupplyRequest(c *gin.Context) {
 // @Router       /supply/requests/{id}/ship [patch]
 func (h *Handler) shipSupplyRequest(c *gin.Context) {
 	id := c.Param("id")
-	role := c.GetString(CtxUserRole)
-	if role == "" {
-		role = "SUPPLY_MANAGER"
+	actorID, actorRole, ok := requireAuditActor(c, "SUPPLY_MANAGER")
+	if !ok {
+		return
 	}
 
-	err := h.svc.ShipSupplyRequest(c.Request.Context(), role, id)
+	err := h.svc.ShipSupplyRequest(c.Request.Context(), actorID, actorRole, id)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -355,6 +383,10 @@ func (h *Handler) receiveSupplyRequest(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_payload", err.Error())
 		return
 	}
+	actorID, actorRole, ok := requireAuditActor(c, "BRANCH_MANAGER")
+	if !ok {
+		return
+	}
 
 	var recItems []ReceiveItemInput
 	for _, i := range req.Items {
@@ -363,7 +395,8 @@ func (h *Handler) receiveSupplyRequest(c *gin.Context) {
 
 	err := h.svc.ReceiveSupplyRequest(c.Request.Context(), ReceiveSupplyRequestInput{
 		RequestID: id,
-		ActorRole: getRole(c, req.ActorRole),
+		ActorID:   actorID,
+		ActorRole: actorRole,
 		Items:     recItems,
 	})
 	if err != nil {
@@ -388,10 +421,15 @@ func (h *Handler) rejectSupplyRequest(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_payload", err.Error())
 		return
 	}
+	actorID, actorRole, ok := requireAuditActor(c, "SUPPLY_MANAGER")
+	if !ok {
+		return
+	}
 
 	sr, err := h.svc.RejectSupplyRequest(c.Request.Context(), RejectSupplyRequestInput{
 		RequestID: id,
-		ActorRole: getRole(c, req.ActorRole),
+		ActorID:   actorID,
+		ActorRole: actorRole,
 		Reason:    req.Reason,
 	})
 	if err != nil {

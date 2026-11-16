@@ -110,7 +110,7 @@ type CreateSupplyRequestReq struct {
 
 type ApproveSupplyRequestReq struct {
 	ActorRole string           `json:"actor_role"`
-	Items     []ApproveItemReq `json:"items" binding:"required"`
+	Items     []ApproveItemReq `json:"items" binding:"required,min=1,dive"`
 }
 
 type ApproveItemReq struct {
@@ -158,10 +158,10 @@ type RejectSupplyRequestReq struct {
 }
 type ReceiveSupplyRequestReq struct {
 	ActorRole string           `json:"actor_role"`
-	Items     []ReceiveItemReq `json:"items"`
+	Items     []ReceiveItemReq `json:"items" binding:"required,min=1,dive"`
 }
 
 type ReceiveItemReq struct {
-	ItemID      string  `json:"item_id" binding:"required"`
+	ItemID      string  `json:"item_id" binding:"required,uuid"`
 	ReceivedQty float64 `json:"received_qty" binding:"required,gte=0"`
 }
