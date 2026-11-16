@@ -234,3 +234,27 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Gate the deployment job on all three environment variables. `infra-up` creates the GitHub environment and writes these values after the AWS role and gateway exist.
 - **Retest:** The workflow should skip while unconfigured and proceed after the first successful `infra-up`; AWS publishing retest remains pending.
 - **Prevention:** Check bootstrap prerequisites in the job condition before requesting OIDC credentials.
+
+### TF-027 — Legacy ECR repositories retained images during teardown
+
+- **Affected area:** `scripts/aws-dev.ps1` ephemeral teardown and Terraform-managed development ECR repositories.
+- **Environment/commit/date:** AWS account `109573999710`, `eu-west-3`; legacy repositories restored from existing state; 2026-11-16.
+- **Severity/status:** Medium; automated image purge implemented, full lifecycle retest pending.
+- **Test type:** AWS ECR integration and Terraform destroy.
+- **Symptom:** Terraform's `force_delete = true` did not unblock deletion of repositories created before that setting was added; the legacy state had no force-delete value and AWS rejected deletion while images remained.
+- **Cause:** Existing ECR repositories can outlive the Terraform option change and contain tagged or untagged image manifests.
+- **Fix:** Before applying the reviewed destroy plan, enumerate image digests in each known development repository and batch-delete them, failing with the repository and ECR failure details if any remain. Fresh repositories continue to use Terraform `force_delete` as a backstop.
+- **Retest:** Pending the complete ephemeral create, endpoint-smoke, and destroy cycle.
+- **Prevention:** Keep ECR cleanup in the destroy path as well as provider configuration; validate teardown with repositories containing image layers.
+
+### TF-028 — Public health probes duplicated the downstream path
+
+- **Affected area:** `scripts/aws-dev.ps1` public API Gateway endpoint verification.
+- **Environment/commit/date:** Deployment script review against the Terraform API Gateway and request-proxy route maps; 2026-11-16.
+- **Severity/status:** High for deployment verification; fixed, live endpoint retest pending.
+- **Test type:** API route contract and deployment smoke verification.
+- **Symptom:** Public health probes constructed URLs such as `/api/v1/branches/health/health`, although API Gateway exposes `/api/v1/branches/health` and the proxy maps that exact path to the host's `/health` endpoint.
+- **Cause:** The probe appended the service-local health path to an already complete public gateway route.
+- **Fix:** Probe the exact public `Path`; continue using `LocalPath` only for the private host-side check.
+- **Retest:** Proxy route unit tests pass; the full public/private endpoint matrix will be recorded during the ephemeral cloud run.
+- **Prevention:** Keep public gateway paths and downstream service paths separate in endpoint test fixtures; verify each public URL against both the API Gateway route and proxy rewrite table.
