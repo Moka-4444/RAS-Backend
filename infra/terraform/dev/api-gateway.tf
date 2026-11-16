@@ -15,7 +15,7 @@ resource "aws_apigatewayv2_api" "public" {
 }
 
 resource "aws_iam_role" "authorizer" {
-  name               = "ras-backend-dev-jwt-authorizer"
+  name               = "ras-backend-dev-jwt-authorizer${local.iam_name_suffix}"
   assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }] })
   tags               = { Environment = "development" }
 }
@@ -74,7 +74,7 @@ resource "aws_apigatewayv2_authorizer" "jwt" {
 }
 
 resource "aws_iam_role" "request_proxy" {
-  name               = "ras-backend-dev-request-proxy"
+  name               = "ras-backend-dev-request-proxy${local.iam_name_suffix}"
   assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }] })
   tags               = { Environment = "development" }
 }

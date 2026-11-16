@@ -28,7 +28,7 @@ resource "aws_ecr_lifecycle_policy" "this" {
 }
 
 resource "aws_iam_role" "instance" {
-  name = "${var.name}-dev-host"
+  name = "${var.name}-dev-host${var.iam_name_suffix}"
   assume_role_policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
@@ -75,7 +75,7 @@ resource "aws_vpc_security_group_ingress_rule" "ec2_instance_connect" {
 }
 
 resource "aws_iam_instance_profile" "this" {
-  name = "${var.name}-dev-host"
+  name = "${var.name}-dev-host${var.iam_name_suffix}"
   role = aws_iam_role.instance.name
 }
 
