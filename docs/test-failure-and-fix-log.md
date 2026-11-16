@@ -1,6 +1,6 @@
 # Test Failure and Fix Log
 
-Prepared: 2026-11-15
+Prepared: 2026-11-15  
 Scope: Confirmed test/build failures found while validating the current `main` checkout.
 
 This log records verified failures and fixes. It is a running document; add entries when the combined feature suite discovers additional issues. Do not record a suspected issue as a confirmed defect until it has reproduction evidence.
@@ -108,49 +108,36 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Evidence:** [Full Compose Actions run](https://github.com/NorthstarEngineering/RAS-Backend/actions/runs/43733645153); [PR #24](https://github.com/NorthstarEngineering/RAS-Backend/pull/24).
 - **Remaining coverage boundary:** This verifies deployment startup, DB migrations/roles, and API liveness. It does not execute authenticated business transactions through every feature API or validate an external mobile app repository. Those remain separate integration coverage items.
 
-### TF-011 — Terraform plan initially read the wrong state object
+### TF-016 — Audit actor attribution and transactional integrity
 
-- **Affected area:** AWS development Terraform backend configuration; `infra/terraform/dev`.
-- **Test type:** Infrastructure plan/state validation.
-- **Symptom:** A read-only plan proposed recreating the VPC, RDS database, EC2 host, and API Gateway resources.
-- **Expected vs. actual:** The plan should reconcile against the existing versioned S3 state. The backend had been initialized without its non-default object key, so Terraform read an empty root key instead.
-- **Cause:** The state object is `ras-backend/dev/terraform.tfstate`, not the default `terraform.tfstate`.
-- **Fix:** Reinitialized with the bucket, region, profile, and explicit `key=ras-backend/dev/terraform.tfstate`. The live state has six resource blocks; current AWS inventory has no RDS instance or application EC2 host. The corrected plan proposes 57 additions, one in-place security-group change, and zero deletions to recreate the documented development stack and add the feature repositories/routes.
-- **Impact/severity/status:** High deployment risk if applied against an empty state; resolved as a state-selection error. The plan was not applied.
-- **Retest:** Correct backend state loaded and plan completed. `terraform validate` passed. The full cloud rollout remains pending.
-- **Follow-up fix:** The lifecycle helper also omitted the non-default key, despite the documentation. Added the explicit `key=ras-backend/dev/terraform.tfstate` backend config to `scripts/aws-dev.ps1` so future lifecycle plans select the same verified object.
-- **Prevention:** Use `scripts/aws-dev.ps1` or always initialize with the documented bucket **and key**. Review the Terraform state list and plan summary before applying; stop if an existing database or host is unexpectedly planned for creation.
-
-### TF-012 — AWS deployment path omitted the six feature APIs
-
-- **Affected area:** API Gateway proxy, EC2 deployment helper, Terraform ECR/network configuration, runtime secrets, and `scripts/aws-dev.ps1`.
-- **Test type:** Deployment configuration and API contract review.
-- **Symptom:** Before this fix, the cloud proxy routed only Auth, Branch, and Attendance; the EC2 deploy helper and ECR IAM policy also supported only those three services. Feature requests therefore had no cloud route or deployment target.
-- **Expected vs. actual:** All nine services should have isolated gateway route namespaces, verified identity headers, ECR images, runtime DB credentials, and startup checks. The AWS path contained only three application mappings.
-- **Fix:** Added route rewrites for Menu, Central Kitchen, Inventory, Cost, Sales, and Transfer; forward verified JWT `sub`/role/branch claims as identity headers; add six ECR repositories and scoped host/network access; add required runtime credentials to the ignored local Terraform secret file; build, deploy, and health-check all nine services; and make Menu's PostgreSQL TLS mode configurable for RDS.
-- **Impact/severity/status:** Feature services were unavailable through the AWS development API. Configuration changes are implemented locally and are being validated; cloud apply remains pending.
-- **Evidence:** Proxy test cases cover all nine service mappings and identity forwarding. Combined Go tests passed across all nine modules; Terraform validation passed. Cloud plan: 57 additions, one in-place change, zero deletions.
-- **Prevention:** Keep the API route map, ECR repository list, runtime secret schema, host deployment map, and Compose service list aligned whenever a feature API is added.
-
-### TF-014 — Menu cloud proxy removed a required route segment
-
-- **Affected area:** AWS API Gateway request proxy mapping for the Menu API.
-- **Test type:** Proxy routing test compared against the actual Go handler registration.
-- **Symptom:** `/api/v1/menu/...` was rewritten as `/api/v1/...`, while the Menu API registers its routes under `/api/v1/menu`.
-- **Cause:** The proxy test expected the prefix to be removed without checking the service router. Its expected path repeated the same incorrect assumption as the implementation.
-- **Fix:** Keep `/api/v1/menu` intact when forwarding to port 9005 and update the test to expect `/api/v1/menu/...`.
-- **Impact/severity/status:** Menu feature requests would have reached the wrong downstream route and returned 404. Fixed before PR submission.
-- **Retest:** `node --test infra/terraform/dev/request-proxy.test.mjs` passes all route cases.
-- **Prevention:** Compare each proxy mapping to the concrete router group in the target API as well as its public/mobile route.
-
-### TF-013 — Local combined Docker build exhausted the C: volume
-
-- **Affected area:** Local Docker Desktop runtime and the all-service Compose smoke test.
-- **Test type:** Combined container build, database migration, and nine-service health smoke.
-- **Symptom:** Docker Desktop initially could not start; after moving only rotated Docker diagnostic logs and stale installer/provider temp files to D:, the daemon started. The combined build then terminated with a Docker Desktop RPC EOF while building the Inventory API, and C: again reached zero free bytes.
-- **Cause:** Docker's existing WSL virtual disk is approximately 22 GiB and stored on C:. The host has insufficient free space for the layer expansion from this multi-image build. The workflow's existing Compose smoke on GitHub Actions passed previously, but the current local attempt did not finish.
-- **Attempted recovery:** Preserved the diagnostic logs, crash dump, installer, and provider files under `D:\DevTools\Go\recovered-c-disk`. The data disk remained in use by Windows virtualization, so relocation could not be completed safely. Existing Docker images, containers, and volumes were not pruned or deleted.
-- **Status/impact:** Local all-service Compose result is incomplete; do not report the local run as passed. Keep this cloud deployment unverified until the Docker disk is moved to D: through Docker Desktop's storage settings, the daemon is healthy, and the combined smoke passes. GitHub Actions remains the independent Linux container-smoke gate.
-- **Prevention:** Keep Go, Terraform, and Docker build storage on D: where possible, reserve adequate host free space before building all services together, and retain a D:-based Docker disk so large image builds cannot exhaust the Windows system volume.
+- **Affected branch/services:** `feature/audit-integration`; Sales, Menu, Central Kitchen Supply.
+- **Environment/commit/date:** Local repair branch based on PR #27 head `177a799`; Windows amd64, Go 1.27.2; 2026-11-16.
+- **Severity/status:** High; fixes implemented and targeted module tests pass; full combined suite and CI pending.
+- **Test types:** Code review, unit/service tests, handler/API validation, transaction failure-path tests.
+- **Reproduction/evidence:** Review of PR #27 found Sales shift closure logged `shift.ManagerID` as the actor, Menu approval logged `req.RequestedBy`, and supply approval/rejection/receipt logged the requester; shipment logged a hardcoded central-kitchen UUID. Sales and all four supply operations logged audit insert errors and still committed their business transactions. Audit routes also accepted role fallbacks from request payloads and did not require an authenticated actor ID.
+- **Expected/actual impact:** Audit history could identify the wrong person, omit a real approver/receiver, or record a service placeholder as the actor. A successful business write could commit without a corresponding audit event, weakening traceability.
+- **Fix:** Populate audit actor ID and role only from the trusted authenticated request context; validate the actor UUID; reject unauthenticated/unauthorized audit actions; use the actual actor for inventory movement metadata; return audit write failures before commit so transaction rollback preserves atomicity. Add tests that verify actor identity and that audit insert failures roll back Sales and Supply transactions; add Menu tests for CEO and actor ID requirements.
+- **Retest:** `go test ./...` passed in Sales, Menu, and Central Kitchen Supply modules after the fixes. Full combined run is pending.
+- **Prevention:** Audit event columns must come from authenticated claims, never the record creator or request body. For audited mutations, the business update and audit insert must share one transaction and the audit insert must be required for commit.
 
 
+### TF-015 — Reports API CI credentials, database privileges, and branch scope
+
+- **Affected branch/service:** `feature/reports-api`, Reports API, database bootstrap and migrations, Docker stack and database CI workflows.
+- **Environment/commit/date:** Local repair branch based on PR #26 head `ee6a6e5`; Windows amd64, Go 1.27.2; 2026-11-16.
+- **Severity/status:** High; fix implemented, full migration and combined-stack retest pending.
+- **Test types:** CI failure diagnosis, handler/API authorization, Go unit tests, database role/migration integration, Docker runtime smoke.
+- **Reproduction/evidence:** PR #26 Docker stack validation run `43745690720` failed before Compose startup because its generated `.env` omitted required `REPORTS_DB_PASSWORD`. After fixing that, run `43823503673` revealed the Reports Dockerfile used Go 1.23.12 while the module requires Go 1.27.2. Inspection also found `roles.sql` hardcoded `reports_ci_password`, the smoke health loop skipped port 9009, Reports had no tests, reporting tables lacked SELECT grants for `reports_app`, and branch/query filters were not enforced by handlers. Reports attendance SQL counted `open` as absent even though an open record represents a successful check-in.
+- **Expected/actual impact:** A fresh stack could fail during role bootstrap or use credentials different from the API; report endpoints could fail on permission denied; branch managers could request cross-branch sales/inventory data; reports queries could return incorrect or unscoped counts.
+- **Fix:** Use `REPORTS_DB_PASSWORD` for create and alter role operations and enforce restricted role attributes; add the credential to both CI workflows; health-check port 9009; align the Reports builder with Go 1.27.2 and its matching static build; grant `reports_app` read-only access to report source tables; require CEO/branch-manager/supply-manager role as appropriate and force branch-manager scope from trusted auth context; scope sales, inventory, attendance, and approval SQL; fix attendance/overtime aggregations; safely encode database URL credentials and support configured SSL mode; add handler tests for authentication, branch scope, and audit role restrictions plus integration checks for read-only grants.
+- **Retest:** Reports API `go test ./...` passed after handler changes. Fresh migration/privilege validation and full ten-service Compose smoke are pending.
+- **Prevention:** Every new runtime role must get its password from the same environment variable in local Compose, CI, and cloud deployment; every reporting query must have an explicit authorization/scope rule and corresponding handler and database tests; full-stack health loops must cover every service port.
+
+
+### TF-017 — AWS deploy automation and complete service matrix
+
+- **Test type:** Terraform validation, API Gateway proxy unit tests, GitHub Actions workflow integration, full Docker Compose smoke.
+- **Symptom:** Development infrastructure published only part of the service set and had no automatic post-smoke path to apply migrations and roll out all APIs. Reports was absent from the deployment inventory.
+- **Fix:** Expanded ECR to all ten API images plus migration runner; added Reports credentials, repository, port 9009 health check, and deploy command; configured OIDC-limited SSM permissions and a success-triggered deployment workflow that runs migrations first, then starts and health-checks all ten APIs.
+- **Verification:** Terraform validation passed; request-proxy tests passed (4/4); Compose configuration validation passed. End-to-end AWS apply and deployment remain pending infrastructure state and successful GitHub publication workflow.
+- **Prevention:** Keep Compose smoke as the deployment prerequisite, publish immutable commit-SHA images, run schema migration before application rollout, and require SSM health confirmation before reporting success.

@@ -8,7 +8,7 @@ if [[ -f /etc/ras-backend-deploy.env ]]; then
 fi
 
 usage() {
-  echo "Usage: ras-backend-deploy.sh migrate <image-sha> | auth-api|branch-api|attendance-api|menu-api|central-kitchen-api|inventory-api|cost-api|sales-api|transfer-api <image-sha>" >&2
+  echo "Usage: ras-backend-deploy.sh migrate <image-sha> | auth-api|branch-api|attendance-api|menu-api|central-kitchen-api|inventory-api|cost-api|sales-api|transfer-api|reports-api <image-sha>" >&2
   exit 2
 }
 [[ $# -eq 2 ]] || usage
@@ -25,12 +25,12 @@ image_tag="$2"
 
 secret_json="$(aws ssm get-parameter --region "$AWS_REGION" --name "$APP_SECRET_PARAMETER_NAME" --with-decryption --query Parameter.Value --output text)"
 master_password="$(aws ssm get-parameter --region "$AWS_REGION" --name "$DATABASE_MASTER_PASSWORD_PARAMETER_NAME" --with-decryption --query Parameter.Value --output text)"
-for key in JWT_SECRET AUTH_DB_PASSWORD BRANCH_DB_PASSWORD ATTENDANCE_DB_PASSWORD MENU_DB_PASSWORD CENTRAL_KITCHEN_DB_PASSWORD INVENTORY_DB_PASSWORD COST_DB_PASSWORD SALES_DB_PASSWORD TRANSFER_DB_PASSWORD SEED_CEO_EMAIL SEED_CEO_PASSWORD; do
+for key in JWT_SECRET AUTH_DB_PASSWORD BRANCH_DB_PASSWORD ATTENDANCE_DB_PASSWORD MENU_DB_PASSWORD CENTRAL_KITCHEN_DB_PASSWORD INVENTORY_DB_PASSWORD COST_DB_PASSWORD SALES_DB_PASSWORD TRANSFER_DB_PASSWORD REPORTS_DB_PASSWORD SEED_CEO_EMAIL SEED_CEO_PASSWORD; do
   jq -e --arg key "$key" '.[$key] | strings | length > 0' <<<"$secret_json" >/dev/null || { echo "Required app secret field missing: $key" >&2; exit 1; }
 done
 jq -e '.JWT_SECRET | test("^[A-Za-z0-9._~-]{32,}$")' <<<"$secret_json" >/dev/null || { echo "JWT_SECRET must be at least 32 URL-safe characters." >&2; exit 1; }
 jq -e '.SEED_CEO_EMAIL | test("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$")' <<<"$secret_json" >/dev/null || { echo "SEED_CEO_EMAIL is invalid." >&2; exit 1; }
-jq -e '[.AUTH_DB_PASSWORD, .BRANCH_DB_PASSWORD, .ATTENDANCE_DB_PASSWORD, .MENU_DB_PASSWORD, .CENTRAL_KITCHEN_DB_PASSWORD, .INVENTORY_DB_PASSWORD, .COST_DB_PASSWORD, .SALES_DB_PASSWORD, .TRANSFER_DB_PASSWORD, .SEED_CEO_PASSWORD] | all(strings and (test("^[A-Za-z0-9._~@-]+$")))' <<<"$secret_json" >/dev/null || { echo "Application passwords contain unsupported characters." >&2; exit 1; }
+jq -e '[.AUTH_DB_PASSWORD, .BRANCH_DB_PASSWORD, .ATTENDANCE_DB_PASSWORD, .MENU_DB_PASSWORD, .CENTRAL_KITCHEN_DB_PASSWORD, .INVENTORY_DB_PASSWORD, .COST_DB_PASSWORD, .SALES_DB_PASSWORD, .TRANSFER_DB_PASSWORD, .REPORTS_DB_PASSWORD, .SEED_CEO_PASSWORD] | all(strings and (test("^[A-Za-z0-9._~@-]+$")))' <<<"$secret_json" >/dev/null || { echo "Application passwords contain unsupported characters." >&2; exit 1; }
 [[ -n "$DATABASE_MASTER_USERNAME" && -n "$master_password" ]] || { echo "RDS master credentials are not configured." >&2; exit 1; }
 
 secret_dir=/etc/ras-backend
@@ -84,6 +84,7 @@ if [[ "$operation" == "migrate" ]]; then
     "COST_DB_PASSWORD=$(jq -er '.COST_DB_PASSWORD' <<<"$secret_json")" \
     "SALES_DB_PASSWORD=$(jq -er '.SALES_DB_PASSWORD' <<<"$secret_json")" \
     "TRANSFER_DB_PASSWORD=$(jq -er '.TRANSFER_DB_PASSWORD' <<<"$secret_json")" \
+    "REPORTS_DB_PASSWORD=$(jq -er '.REPORTS_DB_PASSWORD' <<<"$secret_json")" \
     >"$secret_dir/migration.env"
   chmod 0600 "$secret_dir/migration.env"
   docker run --rm --network host --env-file "$secret_dir/migration.env" --entrypoint psql "$image" -v ON_ERROR_STOP=1 -f /database/bootstrap/roles.sql
@@ -113,6 +114,7 @@ case "$operation" in
   cost-api) repo="${COST_IMAGE_REPOSITORY:?COST_IMAGE_REPOSITORY is required}"; role=cost_app; password_key=COST_DB_PASSWORD; port=9007 ;;
   sales-api) repo="${SALES_IMAGE_REPOSITORY:?SALES_IMAGE_REPOSITORY is required}"; role=sales_app; password_key=SALES_DB_PASSWORD; port=9006 ;;
   transfer-api) repo="${TRANSFER_IMAGE_REPOSITORY:?TRANSFER_IMAGE_REPOSITORY is required}"; role=transfer_app; password_key=TRANSFER_DB_PASSWORD; port=9008 ;;
+  reports-api) repo="${REPORTS_IMAGE_REPOSITORY:?REPORTS_IMAGE_REPOSITORY is required}"; role=reports_app; password_key=REPORTS_DB_PASSWORD; port=9009 ;;
   *) usage ;;
 esac
 registry="${repo%%/*}"

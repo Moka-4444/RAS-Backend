@@ -25,13 +25,15 @@ resource "aws_iam_role" "github_actions_ecr_publish" {
 }
 
 resource "aws_iam_role_policy" "github_actions_ecr_publish" {
-  name = "publish-only-ras-ecr-images"
+  name = "publish-and-deploy-ras-images"
   role = aws_iam_role.github_actions_ecr_publish.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
-      { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage"], Resource = local.publish_repository_arns }
+      { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage"], Resource = local.publish_repository_arns },
+      { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript", "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${module.application.instance_id}"] },
+      { Effect = "Allow", Action = ["ssm:GetCommandInvocation", "ssm:CancelCommand"], Resource = "*" }
     ]
   })
 }

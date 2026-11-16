@@ -1,0 +1,87 @@
+name: Deploy AWS development stack
+
+on:
+  workflow_run:
+    workflows: ["Docker stack validation"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-and-deploy:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    environment: development-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and publish immutable service images
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          registry="$account_id.dkr.ecr.$AWS_REGION.amazonaws.com"
+          services=(
+            'ras-auth-api services/auth-api services/auth-api/Dockerfile'
+            'ras-branch-api services/branch-api services/branch-api/Dockerfile'
+            'ras-attendance-api services/attendance-api services/attendance-api/Dockerfile'
+            'ras-menu-api services/menu-api services/menu-api/Dockerfile'
+            'ras-central-kitchen-api services/central-kitchen-supply services/central-kitchen-supply/Dockerfile'
+            'ras-inventory-api services/inventory-api services/inventory-api/Dockerfile'
+            'ras-cost-api services/cost-api services/cost-api/Dockerfile'
+            'ras-sales-api services/sales-api services/sales-api/Dockerfile'
+            'ras-transfer-api services/transfer-api services/transfer-api/Dockerfile'
+            'ras-reports-api services/reports-api services/reports-api/Dockerfile'
+            'ras-db-migrations . database/Dockerfile'
+          )
+          for entry in "${services[@]}"; do
+            read -r repository context dockerfile <<< "$entry"
+            image="$registry/$repository:${GITHUB_SHA}"
+            docker build --file "$dockerfile" --tag "$image" "$context"
+            docker push "$image"
+          done
+      - name: Find running development host
+        id: host
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          instance_id="$(aws ec2 describe-instances --region "$AWS_REGION" --filters 'Name=tag:Name,Values=ras-backend-dev-app-host' 'Name=instance-state-name,Values=running' --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          test "$instance_id" != "None"
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+      - name: Run migrations and deploy all ten APIs over SSM
+        env:
+          INSTANCE_ID: ${{ steps.host.outputs.instance_id }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          services=(migrate auth-api branch-api attendance-api menu-api central-kitchen-api inventory-api cost-api sales-api transfer-api reports-api)
+          for service in "${services[@]}"; do
+            command_id="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript --parameters "commands=[sudo /usr/local/bin/ras-backend-deploy.sh $service $IMAGE_TAG]" --query 'Command.CommandId' --output text)"
+            for attempt in $(seq 1 60); do
+              status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+              case "$status" in
+                Success) break ;;
+                Failed|TimedOut|Cancelled) aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,Details:StandardErrorContent}' --output json; exit 1 ;;
+              esac
+              sleep 5
+            done
+            test "${status:-}" = Success || { echo "SSM command timed out for $service" >&2; exit 1; }
+          done
+          echo "All ten API services deployed and healthy at $IMAGE_TAG."

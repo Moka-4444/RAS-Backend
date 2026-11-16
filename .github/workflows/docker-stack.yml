@@ -44,6 +44,7 @@ jobs:
           COST_DB_PASSWORD=SmokeCostPass123456789
           SALES_DB_PASSWORD=SmokeSalesPass123456789
           TRANSFER_DB_PASSWORD=SmokeTransferPass123456789
+          REPORTS_DB_PASSWORD=SmokeReportsPass123456789
           JWT_SECRET=SmokeJwtSecret12345678901234567890
           SEED_CEO_NAME=CEO
           SEED_CEO_EMAIL=smoke@example.test
@@ -56,7 +57,7 @@ jobs:
       - name: Verify all API health endpoints
         run: |
           set -euo pipefail
-          for port in 9001 9002 9003 9004 9005 9006 9007 9008 9010; do
+          for port in 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010; do
             curl --fail --silent --show-error "http://127.0.0.1:${port}/health" || {
               if [ "$port" = 9008 ] || [ "$port" = 9010 ]; then
                 curl --fail --silent --show-error "http://127.0.0.1:${port}/healthz"
@@ -110,9 +111,9 @@ jobs:
           - repository: ras-transfer-api
             context: services/transfer-api
             dockerfile: services/transfer-api/Dockerfile
-          - repository: ras-db-migrations
-            context: .
-            dockerfile: database/Dockerfile
+          - repository: ras-reports-api
+            context: services/reports-api
+            dockerfile: services/reports-api/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -132,3 +133,49 @@ jobs:
           image="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY}:${GITHUB_SHA}"
           docker build --file "$DOCKERFILE" --tag "$image" "$BUILD_CONTEXT"
           docker push "$image"
+  deploy-development-stack:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    needs: [compose-build-and-smoke, publish-development-images]
+    runs-on: ubuntu-latest
+    environment: development-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Retrieve running development host
+        id: host
+        run: |
+          set -euo pipefail
+          instance_id="$(aws ec2 describe-instances --filters 'Name=tag:Name,Values=ras-backend-dev-app-host' 'Name=instance-state-name,Values=running' --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          test "$instance_id" != "None"
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+      - name: Run migrations and deploy every API over SSM
+        env:
+          INSTANCE_ID: ${{ steps.host.outputs.instance_id }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          services=(migrate auth-api branch-api attendance-api menu-api central-kitchen-api inventory-api cost-api sales-api transfer-api reports-api)
+          for service in "${services[@]}"; do
+            command_id="$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript --parameters "commands=[sudo /usr/local/bin/ras-backend-deploy.sh $service $IMAGE_TAG]" --query 'Command.CommandId' --output text)"
+            for attempt in $(seq 1 60); do
+              status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+              case "$status" in
+                Success) break ;;
+                Failed|TimedOut|Cancelled) aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,Details:StandardErrorContent}' --output json; exit 1 ;;
+              esac
+              sleep 5
+            done
+            test "${status:-}" = Success || { echo "SSM command timed out for $service" >&2; exit 1; }
+          done
+          echo "All ten API services deployed and healthy at $IMAGE_TAG."
