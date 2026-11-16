@@ -90,13 +90,14 @@ func (s *Service) RecordMovement(ctx context.Context, in RecordMovementInput) (*
 	}
 
 	mov := &InventoryMovement{
-		ID:          uuid.NewString(),
-		InventoryID: inv.ID,
-		Type:        mType,
-		Quantity:    in.Quantity,
-		Reason:      in.Reason,
-		CreatedBy:   in.ActorID,
-		CreatedAt:   now,
+		ID:             uuid.NewString(),
+		InventoryID:    inv.ID,
+		QuantityBefore: oldQty,
+		Type:           mType,
+		Quantity:       in.Quantity,
+		Reason:         in.Reason,
+		CreatedBy:      in.ActorID,
+		CreatedAt:      now,
 	}
 	if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
 		return nil, err
@@ -440,13 +441,14 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorID, actorRole, req
 			}
 
 			mov := &InventoryMovement{
-				ID:          uuid.NewString(),
-				InventoryID: inv.ID,
-				Type:        TypeOut,
-				Quantity:    *item.ApprovedQty,
-				Reason:      "Supply Shipment to Branch",
-				CreatedBy:   actorID,
-				CreatedAt:   time.Now().UTC(),
+				ID:             uuid.NewString(),
+				InventoryID:    inv.ID,
+				QuantityBefore: inv.Quantity,
+				Type:           TypeOut,
+				Quantity:       *item.ApprovedQty,
+				Reason:         "Supply Shipment to Branch",
+				CreatedBy:      actorID,
+				CreatedAt:      time.Now().UTC(),
 			}
 			if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
 				return err
@@ -518,13 +520,13 @@ func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequ
 
 	for i, item := range req.Items {
 		receivedQty := float64(0)
+		if item.ApprovedQty != nil {
+			receivedQty = *item.ApprovedQty
+		}
 		for _, recItem := range in.Items {
 			if item.ID == recItem.ItemID {
 				receivedQty = recItem.ReceivedQty
 			}
-		}
-		if receivedQty == 0 && item.ApprovedQty != nil {
-			receivedQty = *item.ApprovedQty
 		}
 
 		if receivedQty > 0 {
@@ -547,17 +549,17 @@ func (s *Service) ReceiveSupplyRequest(ctx context.Context, in ReceiveSupplyRequ
 			}
 
 			mov := &InventoryMovement{
-				ID: uuid.NewString(), InventoryID: inv.ID, Type: TypeIn,
+				ID: uuid.NewString(), InventoryID: inv.ID, Type: TypeIn, QuantityBefore: inv.Quantity,
 				Quantity: receivedQty, Reason: "Supply Received", CreatedBy: in.ActorID, CreatedAt: time.Now().UTC(),
 			}
 			if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
 				return err
 			}
 
-			req.Items[i].ReceivedQty = &receivedQty
-			if err := s.repo.UpdateSupplyRequestItem(ctx, tx, req.Items[i]); err != nil {
-				return err
-			}
+		}
+		req.Items[i].ReceivedQty = &receivedQty
+		if err := s.repo.UpdateSupplyRequestItem(ctx, tx, req.Items[i]); err != nil {
+			return err
 		}
 	}
 
