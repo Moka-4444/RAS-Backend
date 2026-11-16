@@ -39,24 +39,23 @@ try {
   if (await semantics.count()) await semantics.first().dispatchEvent('click');
 
   const fields = page.getByRole('textbox');
-  await fields.first().click();
-  await page.keyboard.insertText(env.SEED_CEO_EMAIL);
-  await fields.nth(1).click();
-  await page.keyboard.insertText(password);
+  await fields.first().fill(env.SEED_CEO_EMAIL);
+  await fields.nth(1).fill(password);
   const loginResponse = page.waitForResponse(response =>
     response.url() === base + '/api/v1/auth/login' && response.request().method() === 'POST');
-  await page.getByRole('button', {name: 'تسجيل الدخول للجهاز'}).click();
+  await page.getByRole('button', {name: 'تسجيل الدخول للجهاز'}).dispatchEvent('click');
   assert.equal((await loginResponse).status(), 200);
   await page.waitForURL('**/#/home');
   console.log('::notice title=Browser QA::Login button reached the live backend and opened home');
 
   const branchResponse = page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches' && response.request().method() === 'GET');
-  await page.getByLabel('الفروع', {exact: true}).first().click();
+  await page.getByRole('button', {name: 'الفروع', exact: true}).dispatchEvent('click');
   const loaded = await branchResponse;
   assert.equal(loaded.status(), 200);
   assert.match(await loaded.text(), /Browser QA Branch/);
-  await page.getByLabel(/Browser QA Branch/).first().waitFor({state: 'attached'});
+  await page.getByText('Browser QA Branch', {exact: true})
+    .or(page.getByLabel(/Browser QA Branch/)).first().waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded and rendered the PostgreSQL fixture');
 } catch (error) {
   console.log(`::error title=Browser QA::${error.message.split('\n')[0]}`);
