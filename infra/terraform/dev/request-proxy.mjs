@@ -9,6 +9,7 @@ const backendTarget = (path) => {
     ["/api/v1/stock", 9010, "/api/v1/inventory"],
     ["/api/v1/cost", 9007, "/api/v1/cost"],
     ["/api/v1/sales", 9006, "/api/v1/sales"],
+    ["/api/v1/reports", 9009, "/api/v1/reports"],
   ];
   for (const [prefix, port, destination] of namespaced) {
     if (path === prefix || path.startsWith(`${prefix}/`)) return { port, path: `${destination}${path.slice(prefix.length)}` };

@@ -158,3 +158,11 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Added `REPORTS_DB_PASSWORD` to the Terraform example. The deployment workflow uses GitHub OIDC and the Terraform-managed role without static AWS keys; its required variables are `AWS_ROLE_TO_ASSUME` and `AWS_REGION` in the `development-publish` environment.
 - **Verification/status:** Terraform validate passes. Live infrastructure apply, ECR publish, and service deployment cannot start until a bootstrap AWS identity creates/applies the OIDC deployment role and the two environment variables point to it and `eu-west-3`.
 - **Prevention:** Verify AWS STS and GitHub environment prerequisites before triggering a cloud rollout; keep the sample secret schema synchronized with every runtime role; never claim cloud deployment based on CI-only container smoke.
+### TF-020 — Reports API was not reachable through the app gateway
+
+- **Test type:** API Gateway request-proxy route integration test and deployment code review.
+- **Symptom:** `/api/v1/reports/*` had no proxy target, so the Lambda proxy returned 404 even though Reports was present in Compose, ECR, and the EC2 deploy script.
+- **Cause:** The Reports service was added after the request-proxy route matrix and that matrix had no Reports case.
+- **Fix:** Route `/api/v1/reports` and descendants to port 9009, preserving the path; added the Reports sales endpoint to the proxy forwarding test matrix.
+- **Retest:** `node --test infra/terraform/dev/request-proxy.test.mjs` rerun and fresh PR CI pending.
+- **Prevention:** Every newly deployed API must have an API Gateway route mapping and a proxy test in addition to its container health check.

@@ -20,6 +20,7 @@ test("routes known API paths to the service ports and forwards request data", as
     ["/api/v1/stock/movements", 9010, "/api/v1/inventory/movements"],
     ["/api/v1/cost/items/123", 9007, "/api/v1/cost/items/123"],
     ["/api/v1/sales/shifts/open", 9006, "/api/v1/sales/shifts/open"],
+    ["/api/v1/reports/sales", 9009, "/api/v1/reports/sales"],
     ["/api/v1/transfers/stats", 9008, "/api/v1/transfers/stats"],
   ];
 
