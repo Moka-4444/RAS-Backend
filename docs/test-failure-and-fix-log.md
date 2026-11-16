@@ -174,3 +174,15 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Pass `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSLMODE` to Reports in Compose so the service builds the DSN safely.
 - **Retest:** Compose config validation and the combined ten-service Compose smoke are pending on the latest PR commit.
 - **Prevention:** Pass credentials as structured environment fields and use standard URL constructors; avoid embedding raw secrets in DSN strings.
+
+### TF-022 — OpenAPI CI requested an unpublished Redocly version
+
+- **Affected area:** OpenAPI contract validation workflow.
+- **Environment/commit/date:** GitHub Actions on merged `main` commit `5bee53dc727cc8c052c65b6b8c0e4f4a722fded8`; 2026-11-16.
+- **Severity/status:** Medium; workflow fix implemented, retest pending.
+- **Test type:** Main-branch CI diagnosis and OpenAPI contract lint.
+- **Symptom:** Main-branch API contract run `43830158147` failed before reading the OpenAPI document with npm `ETARGET`: no matching version was found for `@redocly/cli@2.79.0`. The PR-head run had passed, showing the floating `npx` resolution can produce a different package selection.
+- **Cause:** The workflow invoked `npx @redocly/cli` without pinning a known package version, so CI's resolution was not reproducible and selected an unavailable release.
+- **Fix:** Pin the workflow command to the published `@latest` dist-tag so npx cannot mistake `2.79.0` for a valid package version. No API schema changes were needed.
+- **Retest:** The follow-up PR OpenAPI CI run is required before marking this issue resolved.
+- **Prevention:** Pin CI tool dependencies to a validated exact version in a lockfile when possible; otherwise use a valid published dist-tag and ensure the main-branch run executes the same check as the PR.

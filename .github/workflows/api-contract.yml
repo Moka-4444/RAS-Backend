@@ -28,4 +28,4 @@ jobs:
         with:
           node-version: 22
       - name: Validate OpenAPI 3.1 contract
-        run: npx --yes @redocly/cli lint --config docs/api/redocly.yaml docs/api/openapi.yaml --format=summary
+        run: npx --yes @redocly/cli@latest lint --config docs/api/redocly.yaml docs/api/openapi.yaml --format=summary
