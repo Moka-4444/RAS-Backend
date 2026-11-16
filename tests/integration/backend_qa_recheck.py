@@ -103,7 +103,9 @@ def main():
 
     movement = {"branch_id": "{source}", "good_id": "{good}"}
     step("stock in", 9010, "/inventory/movements", "POST", {**movement, "type": "IN", "quantity": 10}, 201)
-    step("stock out", 9010, "/inventory/movements", "POST", {**movement, "type": "OUT", "quantity": 1}, 201)
+    step("stock out", 9010, "/inventory/movements", "POST", {
+        **movement, "type": "OUT", "quantity": 1, "reason": "Disposable QA stock issue",
+    }, 201)
     stock = "/inventory/items/{good}"
     query = "?branch_id={source}"
     step("stock settings", 9010, stock + "/settings" + query, "PATCH", {"min_stock": 1, "reorder_level": 3})
