@@ -116,6 +116,9 @@ DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'attendance_app') THEN
         EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON employees, attendance_records, deductions, overtime TO attendance_app';
     END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reports_app') THEN
+        EXECUTE 'GRANT SELECT ON employees, attendance_records, overtime TO reports_app';
+    END IF;
 END $$;
 -- +goose StatementEnd
 

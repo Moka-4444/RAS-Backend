@@ -57,6 +57,7 @@ jobs:
           COST_DB_PASSWORD: ci_cost_password
           SALES_DB_PASSWORD: ci_sales_password
           TRANSFER_DB_PASSWORD: ci_transfer_password
+          REPORTS_DB_PASSWORD: ci_reports_password
         run: psql -h localhost -U migration_admin -d restaurant_db -v ON_ERROR_STOP=1 -f database/bootstrap/roles.sql
       - name: Apply complete migration history to fresh database
         env:

@@ -40,4 +40,18 @@ BEGIN
        OR (SELECT rolconnlimit <> 5 FROM pg_roles WHERE rolname = 'auth_app') THEN
         RAISE EXCEPTION 'auth_app role attributes are not restricted';
     END IF;
+
+    IF NOT has_table_privilege('reports_app', 'audit_logs', 'SELECT')
+       OR NOT has_table_privilege('reports_app', 'sales', 'SELECT')
+       OR NOT has_table_privilege('reports_app', 'inventories', 'SELECT')
+       OR NOT has_table_privilege('reports_app', 'employees', 'SELECT')
+       OR NOT has_table_privilege('reports_app', 'menu_item_requests', 'SELECT')
+       OR has_table_privilege('reports_app', 'sales', 'INSERT')
+       OR has_table_privilege('reports_app', 'sales', 'UPDATE')
+       OR has_table_privilege('reports_app', 'sales', 'DELETE')
+       OR (SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls
+           FROM pg_roles WHERE rolname = 'reports_app')
+       OR (SELECT rolconnlimit <> 5 FROM pg_roles WHERE rolname = 'reports_app') THEN
+        RAISE EXCEPTION 'reports_app grants or role attributes do not match the read-only contract';
+    END IF;
 END $$;

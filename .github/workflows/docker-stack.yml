@@ -45,6 +45,7 @@ jobs:
           COST_DB_PASSWORD=SmokeCostPass123456789
           SALES_DB_PASSWORD=SmokeSalesPass123456789
           TRANSFER_DB_PASSWORD=SmokeTransferPass123456789
+          REPORTS_DB_PASSWORD=SmokeReportsPass123456789
           JWT_SECRET=SmokeJwtSecret12345678901234567890
           SEED_CEO_NAME=CEO
           SEED_CEO_EMAIL=smoke@example.test
@@ -57,7 +58,7 @@ jobs:
       - name: Verify all API health endpoints
         run: |
           set -euo pipefail
-          for port in 9001 9002 9003 9004 9005 9006 9007 9008 9010; do
+          for port in 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010; do
             curl --fail --silent --show-error "http://127.0.0.1:${port}/health" || {
               if [ "$port" = 9008 ] || [ "$port" = 9010 ]; then
                 curl --fail --silent --show-error "http://127.0.0.1:${port}/healthz"
