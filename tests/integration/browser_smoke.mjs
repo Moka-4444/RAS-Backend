@@ -65,7 +65,11 @@ try {
         branchId: '', branchName: '', mustChangePassword: 'false',
       },
     });
-    await page.goto(base + '/#/splash');
+    const branchPage = page.waitForResponse(response =>
+      response.url() === base + '/api/v1/branches' && response.request().method() === 'GET');
+    await page.goto(base + '/#/branches');
+    assert.equal((await branchPage).status(), 200);
+    await enableSemantics();
   } else {
     await page.goto(base + '/#/login');
     await enableSemantics();
@@ -76,16 +80,15 @@ try {
       response.url() === base + '/api/v1/auth/login' && response.request().method() === 'POST');
     await page.getByRole('button', {name: 'تسجيل الدخول للجهاز'}).dispatchEvent('click');
     assert.equal((await loginResponse).status(), 200);
+    await page.waitForURL('**/#/home');
+    await enableSemantics();
+    const branchResponse = page.waitForResponse(response =>
+      response.url() === base + '/api/v1/branches' && response.request().method() === 'GET');
+    await page.getByRole('button', {name: 'الفروع', exact: true}).dispatchEvent('click');
+    const loaded = await branchResponse;
+    assert.equal(loaded.status(), 200);
+    assert.match(await loaded.text(), /Browser QA Branch/);
   }
-  await page.waitForURL('**/#/home');
-  await enableSemantics();
-
-  const branchResponse = page.waitForResponse(response =>
-    response.url() === base + '/api/v1/branches' && response.request().method() === 'GET');
-  await page.getByRole('button', {name: 'الفروع', exact: true}).dispatchEvent('click');
-  const loaded = await branchResponse;
-  assert.equal(loaded.status(), 200);
-  assert.match(await loaded.text(), /Browser QA Branch/);
   await page.getByRole('textbox').first().fill(branch.name);
   await page.getByRole('button', {name: /Browser QA Branch/}).dispatchEvent('click');
   const save = page.getByRole('button', {name: 'حفظ تعديلات الفرع'});

@@ -101,12 +101,17 @@ jobs:
         if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         run: |
           git -C frontend apply "$PWD/tests/integration/browser_frontend.patch"
+          target=lib/main.dart
+          if [[ "$BRANCH_QA_FOCUSED" == true ]]; then
+            target=lib/browser_qa_main.dart
+            cp tests/integration/branch_browser_main.dart "frontend/$target"
+          fi
           cd frontend
           flutter pub get
           keys=(API MENU_API COST_API SALES_API SUPPLY_API TRANSFER_API STOCK_API REPORTS_API)
           defines=()
           for key in "${keys[@]}"; do defines+=("--dart-define=RAS_${key}_BASE_URL=http://127.0.0.1:5173"); done
-          flutter build web --no-pub --no-wasm-dry-run "${defines[@]}"
+          flutter build web --no-pub --no-wasm-dry-run --target "$target" "${defines[@]}"
       - name: Exercise browser buttons against the live stack
         if: github.repository == 'Moka-4444/RAS-Backend' && (github.ref_name == 'codex/backend-qa-recheck' || env.BRANCH_QA_FOCUSED == 'true')
         run: |
