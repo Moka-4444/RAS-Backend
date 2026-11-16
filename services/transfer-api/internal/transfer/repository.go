@@ -20,8 +20,8 @@ const transferCols = `t.id, t.code, t.source_branch_id, t.dest_branch_id, t.good
 	t.sent_by, t.sent_at, t.received_by, t.received_at, t.updated_at`
 
 const viewCols = transferCols + `,
-	src.name AS source_branch_name, src.code AS source_branch_code,
-	dst.name AS dest_branch_name, dst.code AS dest_branch_code,
+	src.name AS source_branch_name,
+	dst.name AS dest_branch_name,
 	g.name AS good_name, g.sku AS good_sku, g.unit AS good_unit`
 
 const fromClause = ` FROM transfers t
