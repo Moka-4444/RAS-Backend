@@ -1,4 +1,9 @@
 variable "name" { type = string }
+variable "iam_name_suffix" {
+  type        = string
+  description = "Region suffix for account-global IAM names when deploying outside the primary region."
+  default     = ""
+}
 variable "ami_id" { type = string }
 variable "instance_type" { type = string }
 variable "public_subnet_id" { type = string }

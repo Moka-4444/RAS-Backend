@@ -1,0 +1,130 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - if [[ "$PUBLISH_IMAGES" == "true" ]]; then aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"; fi
+  build:
+    commands:
+      - |
+        set -euo pipefail
+        registry="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+        if [[ "$PUBLISH_IMAGES" == "true" ]]; then
+          services=(
+          'ras-auth-api services/auth-api services/auth-api/Dockerfile'
+          'ras-branch-api services/branch-api services/branch-api/Dockerfile'
+          'ras-attendance-api services/attendance-api services/attendance-api/Dockerfile'
+          'ras-menu-api services/menu-api services/menu-api/Dockerfile'
+          'ras-central-kitchen-api services/central-kitchen-supply services/central-kitchen-supply/Dockerfile'
+          'ras-inventory-api services/inventory-api services/inventory-api/Dockerfile'
+          'ras-cost-api services/cost-api services/cost-api/Dockerfile'
+          'ras-sales-api services/sales-api services/sales-api/Dockerfile'
+          'ras-transfer-api services/transfer-api services/transfer-api/Dockerfile'
+          'ras-reports-api services/reports-api services/reports-api/Dockerfile'
+          'ras-db-migrations . database/Dockerfile'
+          )
+          for entry in "${services[@]}"; do
+            read -r repository context dockerfile <<< "$entry"
+            image="$registry/$repository:$IMAGE_TAG"
+            docker build --file "$dockerfile" --tag "$image" "$context"
+            docker push "$image"
+          done
+        else
+          echo "Reusing published image tag $IMAGE_TAG; build and deployment steps remain in AWS CodeBuild."
+        fi
+
+        for attempt in $(seq 1 60); do
+          ping="$(aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text)"
+          [[ "$ping" == Online ]] && break
+          sleep 10
+        done
+        [[ "${ping:-}" == Online ]] || { echo "SSM host $INSTANCE_ID did not become online." >&2; exit 1; }
+
+        script_payload="$(sed 's/\r$//' deploy/aws-dev-deploy.sh | gzip -c | base64 -w0)"
+        deploy_environment=$(cat <<EOF
+        AWS_REGION=$AWS_REGION
+        APP_SECRET_PARAMETER_NAME=/ras-backend/dev/application-secrets
+        DATABASE_MASTER_PASSWORD_PARAMETER_NAME=/ras-backend/dev/database-master-password
+        DATABASE_MASTER_USERNAME=$DATABASE_MASTER_USERNAME
+        DATABASE_ENDPOINT=$DATABASE_ENDPOINT
+        DB_NAME=restaurant_db
+        AUTH_IMAGE_REPOSITORY=$registry/ras-auth-api
+        BRANCH_IMAGE_REPOSITORY=$registry/ras-branch-api
+        ATTENDANCE_IMAGE_REPOSITORY=$registry/ras-attendance-api
+        MENU_IMAGE_REPOSITORY=$registry/ras-menu-api
+        CENTRAL_KITCHEN_IMAGE_REPOSITORY=$registry/ras-central-kitchen-api
+        INVENTORY_IMAGE_REPOSITORY=$registry/ras-inventory-api
+        COST_IMAGE_REPOSITORY=$registry/ras-cost-api
+        SALES_IMAGE_REPOSITORY=$registry/ras-sales-api
+        TRANSFER_IMAGE_REPOSITORY=$registry/ras-transfer-api
+        REPORTS_IMAGE_REPOSITORY=$registry/ras-reports-api
+        MIGRATION_IMAGE_REPOSITORY=$registry/ras-db-migrations
+        EOF
+        )
+        environment_payload="$(printf '%s' "$deploy_environment" | gzip -c | base64 -w0)"
+        export INSTANCE_ID IMAGE_TAG script_payload environment_payload
+        python3 - <<'PY' > /tmp/ras-ssm-deploy.json
+        import json, os
+        instance = os.environ['INSTANCE_ID']
+        tag = os.environ['IMAGE_TAG']
+        script = os.environ['script_payload']
+        environment = os.environ['environment_payload']
+        commands = [
+            "set -eu",
+            f"echo '{script}' | base64 -d | gzip -dc | sudo tee /usr/local/bin/ras-backend-deploy.sh >/dev/null && sudo chmod 0700 /usr/local/bin/ras-backend-deploy.sh",
+            f"echo '{environment}' | base64 -d | gzip -dc | sudo tee /etc/ras-backend-deploy.env >/dev/null && sudo chmod 0644 /etc/ras-backend-deploy.env",
+            "sudo /usr/local/bin/ras-host-doctor.sh",
+            f"sudo /usr/local/bin/ras-backend-deploy.sh migrate {tag}",
+            f"for service in auth-api branch-api attendance-api menu-api central-kitchen-api inventory-api cost-api sales-api transfer-api reports-api; do sudo /usr/local/bin/ras-backend-deploy.sh \"$service\" {tag}; done",
+            "for check in '9001:/health' '9002:/health' '9003:/health' '9004:/health' '9005:/health' '9006:/health' '9007:/health' '9008:/healthz' '9009:/health' '9010:/healthz'; do port=\"${check%%:*}\"; path=\"${check#*:}\"; curl --fail --silent --show-error --max-time 10 \"http://127.0.0.1:${port}${path}\" >/dev/null; done"
+        ]
+        json.dump({"InstanceIds": [instance], "DocumentName": "AWS-RunShellScript", "Parameters": {"commands": commands}}, open('/tmp/ras-ssm-deploy.json', 'w'))
+        PY
+        command_id="$(aws ssm send-command --region "$AWS_REGION" --cli-input-json file:///tmp/ras-ssm-deploy.json --query 'Command.CommandId' --output text)"
+        status=Pending
+        for attempt in $(seq 1 90); do
+          status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+          case "$status" in
+            Success) break ;;
+            Failed|TimedOut|Cancelled) aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,Details:StandardErrorContent}' --output json; exit 1 ;;
+          esac
+          sleep 5
+        done
+        [[ "$status" == Success ]] || { echo "SSM deploy and private host health checks timed out: $status" >&2; exit 1; }
+
+        report=/tmp/aws-cloud-deployment-report.md
+        {
+          echo '# AWS cloud deployment and endpoint verification'
+          echo
+          echo "- Run (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "- Source commit: $SOURCE_COMMIT"
+          echo "- Image tag: $IMAGE_TAG"
+          echo "- Region: $AWS_REGION"
+          echo "- API Gateway: $API_GATEWAY_BASE_URL"
+          echo '- Deployment path: AWS CodeBuild → ECR → SSM → EC2 Docker services.'
+          echo '- Stack status: left running in AWS as requested.'
+          echo
+          echo '| Endpoint | HTTP | Result |'
+          echo '|---|---:|---|'
+        } > "$report"
+        failed=0
+        for path in /health /api/v1/auth/health /api/v1/branches/health /api/v1/attendance/health /api/v1/central-kitchen/health /api/v1/menu/health /api/v1/stock/health /api/v1/sales/health /api/v1/cost/health /api/v1/transfers/health /api/v1/reports/health; do
+          code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 25 "$API_GATEWAY_BASE_URL$path" || true)"
+          result=FAIL
+          if [[ "$code" == 200 ]]; then result=PASS; else failed=1; fi
+          printf '| `%s` | %s | %s |\n' "$path" "$code" "$result" >> "$report"
+        done
+        if [[ "$failed" -eq 0 ]]; then
+          echo >> "$report"
+          echo 'Result: PASS. All ten private host health checks and all eleven public gateway health routes returned HTTP 200.' >> "$report"
+        else
+          echo >> "$report"
+          echo 'Result: FAIL. See endpoint rows above; AWS resources remain running for diagnosis.' >> "$report"
+        fi
+        aws s3 cp "$report" "s3://$STATE_BUCKET/ras-backend/dev/reports/aws-cloud-deployment-$IMAGE_TAG.md" --region "$AWS_REGION" --sse AES256
+        cat "$report"
+        [[ "$failed" -eq 0 ]]

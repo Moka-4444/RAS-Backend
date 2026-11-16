@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('up', 'infra-up', 'ephemeral', 'down', 'down-preserve-data', 'shell-down')]
+    [ValidateSet('up', 'provision', 'infra-up', 'ephemeral', 'down', 'down-preserve-data', 'shell-down')]
     [string]$Action,
     [string]$Profile = 'ras-backend-cloud',
     [string]$Region = 'eu-west-3',
@@ -40,12 +40,13 @@ $tfvarsPath = Join-Path $terraformDirectory 'terraform.tfvars'
 if (Test-Path -LiteralPath $tfvarsPath) {
     $tfvarsContent = Get-Content -Raw -LiteralPath $tfvarsPath
     $tfvarsContent = [regex]::Replace($tfvarsContent, '(?m)^aws_profile\s*=.*$', 'aws_profile = ""')
+    $tfvarsContent = [regex]::Replace($tfvarsContent, '(?m)^aws_region\s*=.*$', "aws_region = `"$Region`"")
     [System.IO.File]::WriteAllText($tfvarsPath, $tfvarsContent, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Invoke-Terraform {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    Set-AwsSessionEnvironment
+    Set-TerraformCredentialEnvironment
     & $terraform "-chdir=$terraformDirectory" @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Terraform failed: $($Arguments -join ' ')" }
 }
@@ -58,6 +59,7 @@ function Invoke-Aws {
 }
 
 function Set-AwsSessionEnvironment {
+    $env:AWS_CONFIG_FILE = Join-Path $env:USERPROFILE '.aws\config'
     $credentialOutput = & aws configure export-credentials --profile $Profile --format process
     if ($LASTEXITCODE -ne 0) { throw "Could not refresh AWS credentials from profile '$Profile'." }
     $session = ($credentialOutput | ConvertFrom-Json)
@@ -69,8 +71,28 @@ function Set-AwsSessionEnvironment {
     $env:AWS_SESSION_TOKEN = $session.SessionToken
 }
 
+function Set-TerraformCredentialEnvironment {
+    $credentialProcessPath = Join-Path $PSScriptRoot 'aws-credential-process.ps1'
+    if (-not (Test-Path -LiteralPath $credentialProcessPath)) { throw "AWS credential process helper is missing: $credentialProcessPath" }
+    $credentialConfigPath = Join-Path $toolsDirectory 'terraform-aws-session.config'
+    $bootstrap = @(
+        '$env:AWS_CONFIG_FILE = Join-Path $env:USERPROFILE ''.aws\config'''
+        'Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN -ErrorAction SilentlyContinue'
+        "& '$credentialProcessPath'"
+    ) -join '; '
+    $encodedBootstrap = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($bootstrap))
+    $credentialProcess = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedBootstrap"
+    $config = "[profile ras-backend-terraform]`nregion = $Region`ncredential_process = $credentialProcess`n"
+    [System.IO.File]::WriteAllText($credentialConfigPath, $config, [System.Text.UTF8Encoding]::new($false))
+    $env:AWS_CONFIG_FILE = $credentialConfigPath
+    $env:AWS_PROFILE = 'ras-backend-terraform'
+    $env:RAS_AWS_PROFILE = $Profile
+    Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN, Env:AWS_DEFAULT_PROFILE -ErrorAction SilentlyContinue
+}
+
 function Get-TerraformOutput {
     param([string]$Name)
+    Set-TerraformCredentialEnvironment
     $value = & $terraform "-chdir=$terraformDirectory" output -raw $Name
     if ($LASTEXITCODE -ne 0) { throw "Missing Terraform output: $Name" }
     return $value.Trim()
@@ -103,20 +125,49 @@ function Remove-DevelopmentEcrImages {
     $existing = @($existingJson | ConvertFrom-Json)
     foreach ($repository in $repositories) {
         if ($repository -notin $existing) { continue }
-        $imageJson = Invoke-Aws ecr describe-images --repository-name $repository --query 'imageDetails[].imageDigest' --output json
-        $digests = @($imageJson | ConvertFrom-Json)
-        for ($offset = 0; $offset -lt $digests.Count; $offset += 100) {
-            $end = [Math]::Min($offset + 99, $digests.Count - 1)
-            $imageIds = @($digests[$offset..$end] | ForEach-Object { @{ imageDigest = $_ } })
-            $request = @{ repositoryName = $repository; imageIds = $imageIds } | ConvertTo-Json -Depth 5 -Compress
-            $requestPath = Join-Path $env:TEMP ("ras-ecr-delete-" + [guid]::NewGuid().ToString('N') + '.json')
-            [System.IO.File]::WriteAllText($requestPath, $request, [System.Text.UTF8Encoding]::new($false))
-            try { $resultJson = Invoke-Aws ecr batch-delete-image --cli-input-json "file://$requestPath" --output json }
-            finally { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
-            $result = $resultJson | ConvertFrom-Json
-            if (@($result.failures).Count -gt 0) {
-                $reasons = @($result.failures | ForEach-Object { "$($_.imageId.imageDigest):$($_.failureCode) ($($_.failureReason))" }) -join ', '
-                throw "Could not empty ECR repository $repository before teardown: $reasons"
+        $indexTypes = @('application/vnd.oci.image.index.v1+json', 'application/vnd.docker.distribution.manifest.list.v2+json')
+        $indexAttemptsWithoutProgress = 0
+        while ($true) {
+            $imageJson = Invoke-Aws ecr describe-images --repository-name $repository --query 'imageDetails[].{digest:imageDigest,mediaType:imageManifestMediaType}' --output json
+            $images = @($imageJson | ConvertFrom-Json)
+            if ($images.Count -eq 0) { break }
+            $indexes = @($images | Where-Object { $_.mediaType -in $indexTypes })
+            if ($indexes.Count -gt 0) {
+                $deletedIndex = $false
+                foreach ($image in $indexes) {
+                    $request = @{ repositoryName = $repository; imageIds = @(@{ imageDigest = $image.digest }) } | ConvertTo-Json -Depth 5 -Compress
+                    $requestPath = Join-Path $env:TEMP ("ras-ecr-delete-" + [guid]::NewGuid().ToString('N') + '.json')
+                    [System.IO.File]::WriteAllText($requestPath, $request, [System.Text.UTF8Encoding]::new($false))
+                    try { $resultJson = Invoke-Aws ecr batch-delete-image --cli-input-json "file://$requestPath" --output json }
+                    finally { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
+                    $result = $resultJson | ConvertFrom-Json
+                    $failures = @($result.failures)
+                    $otherFailures = @($failures | Where-Object failureCode -ne 'ImageReferencedByManifestList')
+                    if ($otherFailures.Count -gt 0) {
+                        $reasons = @($otherFailures | ForEach-Object { "$($_.imageId.imageDigest):$($_.failureCode) ($($_.failureReason))" }) -join ', '
+                        throw "Could not delete manifest indexes from ECR repository ${repository}: $reasons"
+                    }
+                    if ($failures.Count -eq 0) { $deletedIndex = $true }
+                }
+                if ($deletedIndex) { $indexAttemptsWithoutProgress = 0; continue }
+                $indexAttemptsWithoutProgress++
+                if ($indexAttemptsWithoutProgress -ge 3) { throw "ECR manifest indexes in $repository remain referenced after three cleanup passes." }
+                Start-Sleep -Seconds 2
+                continue
+            }
+            for ($offset = 0; $offset -lt $images.Count; $offset += 100) {
+                $end = [Math]::Min($offset + 99, $images.Count - 1)
+                $imageIds = @($images[$offset..$end] | ForEach-Object { @{ imageDigest = $_.digest } })
+                $request = @{ repositoryName = $repository; imageIds = $imageIds } | ConvertTo-Json -Depth 5 -Compress
+                $requestPath = Join-Path $env:TEMP ("ras-ecr-delete-" + [guid]::NewGuid().ToString('N') + '.json')
+                [System.IO.File]::WriteAllText($requestPath, $request, [System.Text.UTF8Encoding]::new($false))
+                try { $resultJson = Invoke-Aws ecr batch-delete-image --cli-input-json "file://$requestPath" --output json }
+                finally { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
+                $result = $resultJson | ConvertFrom-Json
+                if (@($result.failures).Count -gt 0) {
+                    $reasons = @($result.failures | ForEach-Object { "$($_.imageId.imageDigest):$($_.failureCode) ($($_.failureReason))" }) -join ', '
+                    throw "Could not empty ECR repository $repository before teardown: $reasons"
+                }
             }
         }
     }
@@ -170,10 +221,10 @@ function Remove-OrphanedDevelopmentVpc {
     }
 }
 
-function New-ReviewedPlan {
+function Ensure-StateBucket {
     $stateBucket = Get-StateBucket
     $bucketExists = $true
-    try { $null = Invoke-Aws s3api head-bucket --bucket $stateBucket }
+    try { $null = Invoke-Aws s3api head-bucket --bucket $stateBucket 2>$null }
     catch { $bucketExists = $false }
     if (-not $bucketExists) {
         $location = if ($Region -eq 'us-east-1') { @{} } else { @{ LocationConstraint = $Region } }
@@ -182,15 +233,32 @@ function New-ReviewedPlan {
         [System.IO.File]::WriteAllText($requestPath, $locationJson, [System.Text.UTF8Encoding]::new($false))
         try { $null = Invoke-Aws s3api create-bucket --bucket $stateBucket --create-bucket-configuration "file://$requestPath" }
         finally { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
-        $null = Invoke-Aws s3api put-public-access-block --bucket $stateBucket --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+        $publicAccessPath = Join-Path $env:TEMP ("ras-state-public-access-" + [guid]::NewGuid().ToString('N') + '.json')
+        $publicAccess = @{ BlockPublicAcls = $true; IgnorePublicAcls = $true; BlockPublicPolicy = $true; RestrictPublicBuckets = $true } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($publicAccessPath, $publicAccess, [System.Text.UTF8Encoding]::new($false))
+        try { $null = Invoke-Aws s3api put-public-access-block --bucket $stateBucket --public-access-block-configuration "file://$publicAccessPath" }
+        finally { Remove-Item -LiteralPath $publicAccessPath -Force -ErrorAction SilentlyContinue }
         $null = Invoke-Aws s3api put-bucket-versioning --bucket $stateBucket --versioning-configuration Status=Enabled
-        $null = Invoke-Aws s3api put-bucket-encryption --bucket $stateBucket --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-        $null = Invoke-Aws s3api put-bucket-tagging --bucket $stateBucket --tagging "TagSet=[{Key=Project,Value=RAS-backend},{Key=Purpose,Value=terraform-state},{Key=Environment,Value=development}]"
-        Start-Sleep -Seconds 3
+        $encryptionPath = Join-Path $env:TEMP ("ras-state-encryption-" + [guid]::NewGuid().ToString('N') + '.json')
+        $encryption = @{ Rules = @(@{ ApplyServerSideEncryptionByDefault = @{ SSEAlgorithm = 'AES256' } }) } | ConvertTo-Json -Depth 5 -Compress
+        [System.IO.File]::WriteAllText($encryptionPath, $encryption, [System.Text.UTF8Encoding]::new($false))
+        try { $null = Invoke-Aws s3api put-bucket-encryption --bucket $stateBucket --server-side-encryption-configuration "file://$encryptionPath" }
+        finally { Remove-Item -LiteralPath $encryptionPath -Force -ErrorAction SilentlyContinue }
+        $taggingPath = Join-Path $env:TEMP ("ras-state-tags-" + [guid]::NewGuid().ToString('N') + '.json')
+        $tagging = @{ TagSet = @(@{ Key = 'Project'; Value = 'RAS-backend' }, @{ Key = 'Purpose'; Value = 'terraform-state' }, @{ Key = 'Environment'; Value = 'development' }) } | ConvertTo-Json -Depth 5 -Compress
+        [System.IO.File]::WriteAllText($taggingPath, $tagging, [System.Text.UTF8Encoding]::new($false))
+        try { $null = Invoke-Aws s3api put-bucket-tagging --bucket $stateBucket --tagging "file://$taggingPath" }
+        finally { Remove-Item -LiteralPath $taggingPath -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 10
     }
+    return $stateBucket
+}
+
+function New-ReviewedPlan {
+    $stateBucket = Ensure-StateBucket
     $null = Invoke-Terraform init -input=false "-backend-config=bucket=$stateBucket" "-backend-config=key=ras-backend/dev/terraform.tfstate" "-backend-config=region=$Region"
     if ($Action -eq 'down') {
-        $null = Invoke-Terraform plan -destroy -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=protect_database=false" "-out=$planPath"
+        $null = Invoke-Terraform plan -destroy -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=aws_region=$Region" "-var=protect_database=false" "-out=$planPath"
     } elseif ($Action -eq 'down-preserve-data') {
         $targets = @(Get-PreserveDataTargets)
         if ($targets.Count -eq 0) { throw 'No disposable Terraform resources were found to destroy.' }
@@ -201,14 +269,16 @@ function New-ReviewedPlan {
             '-input=false',
             '-var-file=terraform.tfvars',
             "-var-file=$secretFile",
+            "-var=aws_region=$Region",
             '-var=protect_database=true'
         ) + $targetArguments + @("-out=$planPath")
         $null = Invoke-Terraform @planArguments
     } elseif ($Action -eq 'shell-down') {
-        $null = Invoke-Terraform plan -destroy -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=protect_database=true" "-target=module.application" "-out=$planPath"
+        $null = Invoke-Terraform plan -destroy -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=aws_region=$Region" "-var=protect_database=true" "-target=module.application" "-out=$planPath"
     } else {
-        $null = Invoke-Terraform plan -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-out=$planPath"
+        $null = Invoke-Terraform plan -input=false "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=aws_region=$Region" "-out=$planPath"
     }
+    Set-TerraformCredentialEnvironment
     $planJson = (& $terraform "-chdir=$terraformDirectory" show -json $planPath | ConvertFrom-Json)
     if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the Terraform plan.' }
     $changes = @($planJson.resource_changes | Where-Object { ($_.change.actions -join ',') -ne 'no-op' })
@@ -223,6 +293,7 @@ function New-ReviewedPlan {
 }
 
 function Get-PreserveDataTargets {
+    Set-TerraformCredentialEnvironment
     $stateAddresses = @(& $terraform "-chdir=$terraformDirectory" state list)
     if ($LASTEXITCODE -ne 0) { throw 'Could not list Terraform state resources.' }
     return @(
@@ -345,6 +416,15 @@ if ($Action -in @('up', 'infra-up')) {
     }
 }
 
+if ($Action -eq 'provision') {
+    $changes = New-ReviewedPlan
+    if ($changes.Count -gt 0) {
+        Write-Output "Applying reviewed infrastructure in isolated region $Region."
+        Invoke-Terraform apply -input=false -auto-approve $planPath
+    } else { Write-Output "Infrastructure is already current in $Region." }
+    exit 0
+}
+
 if ($Action -eq 'infra-up') {
     $changes = New-ReviewedPlan
     if ($changes.Count -gt 0) {
@@ -355,8 +435,8 @@ if ($Action -eq 'infra-up') {
     $roleArn = Get-TerraformOutput 'github_actions_publish_role_arn'
     $regionValue = Get-TerraformOutput 'github_actions_aws_region'
     $gatewayBaseUrl = Get-TerraformOutput 'github_actions_api_gateway_base_url'
-    $null = gh auth refresh -s repo,workflow
-    if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI needs repo/workflow administration authorization to configure OIDC deployment.' }
+    $null = gh auth status --hostname github.com
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI authentication to github.com is required to configure OIDC deployment.' }
     $environmentUri = "repos/NorthstarEngineering/RAS-Backend/environments/$environmentName"
     $null = gh api --method PUT $environmentUri --field wait_timer=0 --field can_admins_bypass=false
     if ($LASTEXITCODE -ne 0) { throw "Could not create/configure GitHub environment $environmentName." }
@@ -555,23 +635,31 @@ elseif ($Action -eq 'down-preserve-data') {
     Write-Output 'Disposable application infrastructure destroyed. RDS data and required networking were retained.'
 }
 else {
-    $stateBucket = Get-StateBucket
+    $stateBucket = Ensure-StateBucket
     Invoke-Terraform init -input=false "-backend-config=bucket=$stateBucket" "-backend-config=key=ras-backend/dev/terraform.tfstate" "-backend-config=region=$Region"
-    $state = (& $terraform "-chdir=$terraformDirectory" state pull | Out-String)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($state)) { throw 'Could not back up remote Terraform state; refusing teardown.' }
-    $null = $state | ConvertFrom-Json -ErrorAction Stop
-    $backupDirectory = Join-Path $env:LOCALAPPDATA 'RAS-Backend\terraform-state-backups'
-    New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
-    $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($state)
-    Add-Type -AssemblyName System.Security
-    $encryptedState = [System.Security.Cryptography.ProtectedData]::Protect(
-        $plainBytes,
-        $null,
-        [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-    )
-    $backupPath = Join-Path $backupDirectory ("ras-backend-dev-" + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '.state.dpapi')
-    [System.IO.File]::WriteAllBytes($backupPath, $encryptedState)
-    Write-Output "Encrypted local state backup saved at $backupPath"
+    $stateKey = 'ras-backend/dev/terraform.tfstate'
+    $stateObjects = Invoke-Aws s3api list-objects-v2 --bucket $stateBucket --prefix $stateKey --query 'Contents[].Key' --output text
+    $stateExists = @($stateObjects -split '\s+' | Where-Object { $_ -eq $stateKey }).Count -gt 0
+    if ($stateExists) {
+        Set-TerraformCredentialEnvironment
+        $state = (& $terraform "-chdir=$terraformDirectory" state pull | Out-String)
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($state)) { throw 'Could not back up remote Terraform state; refusing teardown.' }
+        $null = $state | ConvertFrom-Json -ErrorAction Stop
+        $backupDirectory = Join-Path $env:LOCALAPPDATA 'RAS-Backend\terraform-state-backups'
+        New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+        $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($state)
+        Add-Type -AssemblyName System.Security
+        $encryptedState = [System.Security.Cryptography.ProtectedData]::Protect(
+            $plainBytes,
+            $null,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+        $backupPath = Join-Path $backupDirectory ("ras-backend-dev-" + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '.state.dpapi')
+        [System.IO.File]::WriteAllBytes($backupPath, $encryptedState)
+        Write-Output "Encrypted local state backup saved at $backupPath"
+    } else {
+        Write-Warning 'No remote Terraform state exists in the newly created state bucket; the reviewed destroy plan will use an empty state.'
+    }
 
     $changes = New-ReviewedPlan
     $addresses = @($changes | ForEach-Object address)
@@ -579,6 +667,13 @@ else {
     Write-Warning 'This deletes the development RDS database and its data. The separately managed, versioned Terraform state S3 bucket is retained.'
     $confirmation = if ($AutoDestroy) { 'DELETE RAS BACKEND DEV DATA' } else { Read-Host 'Type DELETE RAS BACKEND DEV DATA to continue' }
     if ($confirmation -cne 'DELETE RAS BACKEND DEV DATA') { throw 'Teardown cancelled; no resources were destroyed.' }
+    $databaseWillBeDestroyed = @($changes | Where-Object {
+        $_.address -eq 'module.database.aws_db_instance.this' -and $_.change.actions -contains 'delete'
+    }).Count -gt 0
+    if ($databaseWillBeDestroyed) {
+        Invoke-Terraform apply -input=false -auto-approve "-target=module.database.aws_db_instance.this" "-var-file=terraform.tfvars" "-var-file=$secretFile" "-var=protect_database=false"
+        $changes = New-ReviewedPlan
+    }
     Remove-DevelopmentEcrImages
     Invoke-Terraform apply -input=false -auto-approve $planPath
     Write-Output 'Development infrastructure destroyed. Terraform state bucket and encrypted laptop backup remain.'

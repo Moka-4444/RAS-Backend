@@ -8,7 +8,7 @@ locals {
 }
 
 resource "aws_iam_role" "github_actions_ecr_publish" {
-  name = "ras-backend-dev-github-ecr-publish"
+  name = "ras-backend-dev-github-ecr-publish${local.iam_name_suffix}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

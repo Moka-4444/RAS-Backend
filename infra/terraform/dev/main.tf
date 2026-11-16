@@ -7,6 +7,11 @@ provider "aws" {
 }
 
 data "aws_availability_zones" "available" { state = "available" }
+locals {
+  # IAM names are account-global. Keep legacy eu-west-3 names for the existing
+  # stack and isolate every additional region with a suffix.
+  iam_name_suffix = var.aws_region == "eu-west-3" ? "" : "-${var.aws_region}"
+}
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -65,6 +70,7 @@ resource "aws_ssm_parameter" "application_secrets" {
 module "application" {
   source                                  = "../modules/application"
   name                                    = "ras-backend"
+  iam_name_suffix                        = local.iam_name_suffix
   ami_id                                  = data.aws_ami.ubuntu.id
   instance_type                           = var.application_instance_type
   public_subnet_id                        = try(module.network.public_subnet_ids[0], null)
