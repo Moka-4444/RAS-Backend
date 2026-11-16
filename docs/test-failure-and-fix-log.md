@@ -210,3 +210,15 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Create the account/region state bucket before Terraform initialization, enable all S3 public access blocks, versioning, and AES-256 encryption; after a successful ephemeral destroy, remove all object versions/delete markers and delete the bucket.
 - **Retest:** Bucket security controls were verified after bootstrap. Recovery state was loaded only to inspect the former inventory; Terraform refresh showed AWS had independently removed/replaced resources. Full clean-plan/apply/teardown retest is pending AWS reauthentication.
 - **Prevention:** Treat backend setup/cleanup as explicit lifecycle stages and verify the backend bucket exists and is protected before Terraform init.
+
+### TF-025 — ECR image layers blocked the repeatable teardown
+
+- **Affected area:** Terraform ECR repository lifecycle for all API and migration images.
+- **Environment/commit/date:** AWS account `109573999710`, `eu-west-3`; ephemeral run on `main` `7ad5c319304c847563d2c00ad170efe85327e7cf`; 2026-11-16.
+- **Severity/status:** Medium; fix implemented, live destroy/recreate retest pending.
+- **Test type:** Terraform destroy and AWS ECR integration.
+- **Symptom:** The ephemeral lifecycle stopped before deployment because Terraform could not destroy four existing ECR repositories containing image tags; AWS returned `RepositoryNotEmptyException`.
+- **Cause:** The repository resource did not set `force_delete`, so Terraform required an empty image repository before destroy.
+- **Fix:** Set `force_delete = true` on the development ECR repositories so each disposable run can remove image layers and recreate clean repositories.
+- **Retest:** Terraform formatting/validation and the next full ephemeral run are pending.
+- **Prevention:** Exercise destroy behavior with populated repositories as part of infrastructure lifecycle verification, not only fresh-stack creation.
