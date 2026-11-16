@@ -7,6 +7,7 @@
 \getenv cost_password COST_DB_PASSWORD
 \getenv sales_password SALES_DB_PASSWORD
 \getenv transfer_password TRANSFER_DB_PASSWORD
+\getenv reports_password REPORTS_DB_PASSWORD
 
 SELECT format('CREATE ROLE auth_app LOGIN PASSWORD %L', :'auth_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_app')
@@ -72,15 +73,12 @@ SELECT format('ALTER ROLE transfer_app WITH LOGIN PASSWORD %L', :'transfer_passw
 \gexec
 ALTER ROLE transfer_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
 
--- Reports App (باستخدام DO block عشان نتخطى مشكلة الـ CI)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reports_app') THEN
-        CREATE ROLE reports_app LOGIN PASSWORD 'reports_ci_password';
-    END IF;
-END
-$$;
-ALTER ROLE reports_app CONNECTION LIMIT 5;
+-- Reports App
+SELECT format('CREATE ROLE reports_app LOGIN PASSWORD %L', :'reports_password') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reports_app')
+\gexec
+SELECT format('ALTER ROLE reports_app WITH LOGIN PASSWORD %L', :'reports_password')
+\gexec
+ALTER ROLE reports_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
 
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO auth_app, branch_app, attendance_app, menu_app, inventory_app, central_kitchen_app, cost_app, sales_app, transfer_app, reports_app;

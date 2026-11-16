@@ -6,9 +6,10 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 
 	_ "github.com/NorthstarEngineering/RAS-Backend/services/reports-api/docs"
@@ -36,7 +37,14 @@ func main() {
 		dbName := getEnv("DB_NAME", "restaurant_db")
 		dbUser := getEnv("DB_USER", "reports_app")
 		dbPass := getEnv("DB_PASSWORD", "TestPassword123")
-		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
+		sslMode := getEnv("DB_SSLMODE", "disable")
+		dbURL = (&url.URL{
+			Scheme:   "postgres",
+			User:     url.UserPassword(dbUser, dbPass),
+			Host:     net.JoinHostPort(dbHost, dbPort),
+			Path:     dbName,
+			RawQuery: url.Values{"sslmode": []string{sslMode}}.Encode(),
+		}).String()
 	}
 
 	db, err := sqlx.Connect("postgres", dbURL)

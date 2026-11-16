@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -8,10 +9,18 @@ import (
 )
 
 type Handler struct {
-	svc *Service
+	svc reportService
 }
 
-func NewHandler(svc *Service) *Handler {
+type reportService interface {
+	GetAuditLogs(context.Context, AuditFilter) ([]*AuditLog, error)
+	GetSalesReport(context.Context, ReportFilter) (*SalesReportResponse, error)
+	GetInventoryReport(context.Context, ReportFilter) (*InventoryReportResponse, error)
+	GetAttendanceReport(context.Context, ReportFilter) (*AttendanceReportResponse, error)
+	GetApprovalQueue(context.Context, ReportFilter) (*ApprovalQueueResponse, error)
+}
+
+func NewHandler(svc reportService) *Handler {
 	return &Handler{svc: svc}
 }
 
@@ -36,8 +45,20 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 // @Success      200 {array} AuditLogResponse
 // @Router       /reports/audit [get]
 func (h *Handler) getAuditLogs(c *gin.Context) {
+	if !requireRole(c, "CEO") {
+		return
+	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
 
 	filter := AuditFilter{
 		Action:     c.Query("action"),
@@ -68,8 +89,12 @@ func (h *Handler) getAuditLogs(c *gin.Context) {
 // @Success      200 {object} SalesReportResponse
 // @Router       /reports/sales [get]
 func (h *Handler) getSalesReport(c *gin.Context) {
+	branchID, ok := authorizedBranch(c, "BRANCH_MANAGER")
+	if !ok {
+		return
+	}
 	filter := ReportFilter{
-		BranchID: c.Query("branch_id"),
+		BranchID: branchID,
 		From:     c.Query("from"),
 		To:       c.Query("to"),
 	}
@@ -88,7 +113,11 @@ func (h *Handler) getSalesReport(c *gin.Context) {
 // @Success      200 {object} InventoryReportResponse
 // @Router       /reports/inventory [get]
 func (h *Handler) getInventoryReport(c *gin.Context) {
-	filter := ReportFilter{BranchID: c.Query("branch_id")}
+	branchID, ok := authorizedBranch(c, "BRANCH_MANAGER", "SUPPLY_MANAGER")
+	if !ok {
+		return
+	}
+	filter := ReportFilter{BranchID: branchID}
 	resp, err := h.svc.GetInventoryReport(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -105,9 +134,14 @@ func (h *Handler) getInventoryReport(c *gin.Context) {
 // @Success      200 {object} AttendanceReportResponse
 // @Router       /reports/attendance [get]
 func (h *Handler) getAttendanceReport(c *gin.Context) {
+	branchID, ok := authorizedBranch(c, "BRANCH_MANAGER")
+	if !ok {
+		return
+	}
 	filter := ReportFilter{
-		From: c.Query("from"),
-		To:   c.Query("to"),
+		BranchID: branchID,
+		From:     c.Query("from"),
+		To:       c.Query("to"),
 	}
 	resp, err := h.svc.GetAttendanceReport(c.Request.Context(), filter)
 	if err != nil {
@@ -123,19 +157,46 @@ func (h *Handler) getAttendanceReport(c *gin.Context) {
 // @Success      200 {object} ApprovalQueueResponse
 // @Router       /reports/approvals [get]
 func (h *Handler) getApprovalQueue(c *gin.Context) {
-	resp, err := h.svc.GetApprovalQueue(c.Request.Context(), ReportFilter{})
+	branchID, ok := authorizedBranch(c, "SUPPLY_MANAGER")
+	if !ok {
+		return
+	}
+	resp, err := h.svc.GetApprovalQueue(c.Request.Context(), ReportFilter{BranchID: branchID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
 }
-func getBranchID(c *gin.Context) string {
-	// لو المستخدم CEO، ياخد الـ branch_id من الـ Query
+func requireRole(c *gin.Context, allowed ...string) bool {
 	role := c.GetString("user_role")
-	if role == "CEO" {
-		return c.Query("branch_id")
+	if role == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authenticated user context is required"})
+		return false
 	}
-	// لو Branch Manager، ياخد الـ branch_id بتاعه من الـ Context
-	return c.GetString("branch_id")
+	for _, candidate := range allowed {
+		if role == "CEO" || role == candidate {
+			return true
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "role is not allowed to access this report"})
+	return false
+}
+
+func authorizedBranch(c *gin.Context, scopedRoles ...string) (string, bool) {
+	if !requireRole(c, scopedRoles...) {
+		return "", false
+	}
+	if c.GetString("user_role") == "CEO" {
+		return c.Query("branch_id"), true
+	}
+	if c.GetString("user_role") == "SUPPLY_MANAGER" {
+		return c.Query("branch_id"), true
+	}
+	branchID := c.GetString("branch_id")
+	if branchID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "branch assignment is required"})
+		return "", false
+	}
+	return branchID, true
 }

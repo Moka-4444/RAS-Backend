@@ -102,8 +102,8 @@ func (r *Repository) GetSalesReport(ctx context.Context, f ReportFilter) (*Sales
 func (r *Repository) GetInventoryReport(ctx context.Context, f ReportFilter) (*InventoryReportResponse, error) {
 	query := `SELECT 
 		COUNT(DISTINCT i.good_id) as total_items,
-		COALESCE(SUM(i.quantity * g.unit_cost), 0) as total_value,
-		COUNT(CASE WHEN i.quantity < g.reorder_level THEN 1 END) as low_stock_items
+		COALESCE(SUM(i.quantity * i.unit_cost), 0) as total_value,
+		COUNT(CASE WHEN i.quantity < COALESCE(i.reorder_level, g.reorder_level) THEN 1 END) as low_stock_items
 		FROM inventories i
 		JOIN goods g ON i.good_id = g.id
 		WHERE 1=1`
@@ -128,21 +128,30 @@ func (r *Repository) GetInventoryReport(ctx context.Context, f ReportFilter) (*I
 // Attendance Report
 // ============================================================
 func (r *Repository) GetAttendanceReport(ctx context.Context, f ReportFilter) (*AttendanceReportResponse, error) {
-	// 1. Total Employees
+	// Count active employees in the requested branch and attendance window.
 	empQuery := `SELECT COUNT(id) FROM employees WHERE active = TRUE`
+	var empArgs []interface{}
+	if f.BranchID != "" {
+		empQuery += ` AND branch_id = $1`
+		empArgs = append(empArgs, f.BranchID)
+	}
 	var totalEmp int
-	if err := r.db.GetContext(ctx, &totalEmp, empQuery); err != nil {
+	if err := r.db.GetContext(ctx, &totalEmp, empQuery, empArgs...); err != nil {
 		return nil, fmt.Errorf("get total employees: %w", err)
 	}
 
 	// 2. Present & Absent
 	attQuery := `SELECT 
-		COUNT(DISTINCT employee_id) FILTER (WHERE status = 'closed') as present,
-		COUNT(DISTINCT employee_id) FILTER (WHERE status = 'open') as absent
+		COUNT(DISTINCT employee_id) as present
 		FROM attendance_records WHERE 1=1`
 
 	var args []interface{}
 	argIndex := 1
+	if f.BranchID != "" {
+		attQuery += fmt.Sprintf(" AND branch_id = $%d", argIndex)
+		args = append(args, f.BranchID)
+		argIndex++
+	}
 	if f.From != "" {
 		attQuery += fmt.Sprintf(" AND work_date >= $%d", argIndex)
 		args = append(args, f.From)
@@ -155,7 +164,6 @@ func (r *Repository) GetAttendanceReport(ctx context.Context, f ReportFilter) (*
 
 	var attResult struct {
 		Present int `db:"present"`
-		Absent  int `db:"absent"`
 	}
 	if err := r.db.GetContext(ctx, &attResult, attQuery, args...); err != nil {
 		return nil, fmt.Errorf("get attendance report: %w", err)
@@ -163,15 +171,32 @@ func (r *Repository) GetAttendanceReport(ctx context.Context, f ReportFilter) (*
 
 	// 3. Total Overtime
 	otQuery := `SELECT COALESCE(SUM(amount), 0) FROM overtime WHERE status = 'approved'`
+	var otArgs []interface{}
+	var otConditions []string
+	if f.BranchID != "" {
+		otConditions = append(otConditions, "branch_id = $1")
+		otArgs = append(otArgs, f.BranchID)
+	}
+	if f.From != "" {
+		otConditions = append(otConditions, fmt.Sprintf("work_date >= $%d", len(otArgs)+1))
+		otArgs = append(otArgs, f.From)
+	}
+	if f.To != "" {
+		otConditions = append(otConditions, fmt.Sprintf("work_date <= $%d", len(otArgs)+1))
+		otArgs = append(otArgs, f.To)
+	}
+	if len(otConditions) > 0 {
+		otQuery += " AND " + strings.Join(otConditions, " AND ")
+	}
 	var totalOvertime float64
-	if err := r.db.GetContext(ctx, &totalOvertime, otQuery); err != nil {
+	if err := r.db.GetContext(ctx, &totalOvertime, otQuery, otArgs...); err != nil {
 		return nil, fmt.Errorf("get overtime: %w", err)
 	}
 
 	return &AttendanceReportResponse{
 		TotalEmployees: totalEmp,
 		Present:        attResult.Present,
-		Absent:         totalEmp - attResult.Present,
+		Absent:         max(totalEmp-attResult.Present, 0),
 		TotalOvertime:  totalOvertime,
 	}, nil
 }
@@ -182,15 +207,25 @@ func (r *Repository) GetAttendanceReport(ctx context.Context, f ReportFilter) (*
 func (r *Repository) GetApprovalQueue(ctx context.Context, f ReportFilter) (*ApprovalQueueResponse, error) {
 	// 1. Pending Menu Requests
 	menuQuery := `SELECT COUNT(id) FROM menu_item_requests WHERE status = 'PENDING'`
+	var menuArgs []interface{}
+	if f.BranchID != "" {
+		menuQuery += ` AND branch_id = $1`
+		menuArgs = append(menuArgs, f.BranchID)
+	}
 	var pendingMenu int
-	if err := r.db.GetContext(ctx, &pendingMenu, menuQuery); err != nil {
+	if err := r.db.GetContext(ctx, &pendingMenu, menuQuery, menuArgs...); err != nil {
 		return nil, fmt.Errorf("get menu requests: %w", err)
 	}
 
 	// 2. Pending Supply Requests
 	supplyQuery := `SELECT COUNT(id) FROM supply_requests WHERE status = 'PENDING'`
+	var supplyArgs []interface{}
+	if f.BranchID != "" {
+		supplyQuery += ` AND branch_id = $1`
+		supplyArgs = append(supplyArgs, f.BranchID)
+	}
 	var pendingSupply int
-	if err := r.db.GetContext(ctx, &pendingSupply, supplyQuery); err != nil {
+	if err := r.db.GetContext(ctx, &pendingSupply, supplyQuery, supplyArgs...); err != nil {
 		return nil, fmt.Errorf("get supply requests: %w", err)
 	}
 

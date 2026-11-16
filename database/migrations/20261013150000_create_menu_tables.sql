@@ -39,6 +39,15 @@ CREATE TABLE menu_item_requests (
 CREATE INDEX idx_menu_cat ON menu_items (category_id);
 CREATE INDEX idx_req_status ON menu_item_requests (status);
 
+-- Reports service reads request counts; it receives read-only access.
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reports_app') THEN
+        EXECUTE 'GRANT SELECT ON menu_item_requests TO reports_app';
+    END IF;
+END $$;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'menu_app') THEN
