@@ -1,0 +1,1197 @@
+diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+index bc154f3..3443192 100644
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -294,41 +294,31 @@ final appRouter = GoRouter(
+     GoRoute(
+       path: '/attendance/details',
+       name: 'attendance-details',
++      redirect: (_, state) =>
++          state.extra is AttendanceRecord ? null : '/attendance',
+       builder: (context, state) {
+-        final record = state.extra as AttendanceRecord?;
+-        if (record == null) {
+-          return const MobileViewport(
+-            child: UnderDevelopmentScreen(
+-              feature: 'تفاصيل حضور بدون سجل من قاعدة البيانات',
+-            ),
+-          );
+-        }
++        final record = state.extra as AttendanceRecord;
+         return MobileViewport(child: AttendanceDetailsScreen(record: record));
+       },
+     ),
+     GoRoute(
+       path: '/attendance/adjust',
+       name: 'attendance-adjust',
++      redirect: (_, state) {
++        final record = state.extra;
++        return record is AttendanceRecord && record.canAdjustDeduction
++            ? null
++            : '/attendance';
++      },
+       builder: (context, state) {
+-        final record = state.extra as AttendanceRecord?;
+-        if (record == null) {
+-          return const MobileViewport(
+-            child: UnderDevelopmentScreen(
+-              feature: 'تعديل خصم بدون سجل من قاعدة البيانات',
+-            ),
+-          );
+-        }
++        final record = state.extra as AttendanceRecord;
+         return MobileViewport(child: DeductionAdjustmentScreen(record: record));
+       },
+     ),
+     GoRoute(
+       path: '/attendance/history',
+       name: 'attendance-history',
+-      builder: (context, state) {
+-        return const MobileViewport(
+-          child: UnderDevelopmentScreen(feature: 'سجل الحضور التاريخي'),
+-        );
+-      },
++      redirect: (_, __) => '/attendance',
+     ),
+     // Story 5 (OT) Routes
+     GoRoute(
+diff --git a/lib/features/attendance/data/repositories/api_attendance_repository.dart b/lib/features/attendance/data/repositories/api_attendance_repository.dart
+index 43def0c..8025216 100644
+--- a/lib/features/attendance/data/repositories/api_attendance_repository.dart
++++ b/lib/features/attendance/data/repositories/api_attendance_repository.dart
+@@ -1,10 +1,54 @@
+ import '../../../../core/network/authenticated_api.dart';
++import '../../../employees/domain/entities/employee.dart';
++import '../../domain/entities/attendance_record.dart';
+ 
+ class ApiAttendanceRepository {
+   ApiAttendanceRepository(this.api);
+ 
+   final AuthenticatedApi api;
+ 
++  Future<AttendanceRecord> getRecord({
++    required Employee employee,
++    required DateTime workDate,
++  }) async {
++    final query = Uri(
++      queryParameters: {
++        'employee_id': employee.id,
++        'work_date': workDate.toIso8601String().split('T').first,
++      },
++    ).query;
++    final data = await api.get('/api/v1/attendance/records?$query') as Map;
++    final deduction = data['deduction'] as Map?;
++    final delayMinutes = (deduction?['late_minutes'] as num?)?.toInt() ?? 0;
++    final checkOut = data['check_out_at'] as String?;
++
++    return AttendanceRecord(
++      id: data['id'] as String,
++      employeeName: employee.name,
++      employeeCode: employee.code,
++      role: employee.role,
++      workDate: data['work_date'] as String,
++      checkInTime: _localTime(data['check_in_at'] as String),
++      checkOutTime: checkOut == null ? null : _localTime(checkOut),
++      status: delayMinutes > 0
++          ? AttendanceStatus.late
++          : AttendanceStatus.present,
++      deductionId: deduction?['id'] as String?,
++      isDeductionCancelled: deduction?['cancelled'] == true,
++      delayMinutes: delayMinutes,
++      deductionAmount:
++          (deduction?['effective_amount'] as num?)?.toDouble() ?? 0,
++      isDeductionAdjusted:
++          deduction?['adjusted_amount'] != null ||
++          deduction?['cancelled'] == true,
++    );
++  }
++
++  String _localTime(String value) {
++    final local = DateTime.parse(value).toLocal();
++    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
++  }
++
+   Future<Map<String, dynamic>> checkIn({
+     required String employeeId,
+     String source = 'manual',
+diff --git a/lib/features/attendance/domain/entities/attendance_record.dart b/lib/features/attendance/domain/entities/attendance_record.dart
+index 15c11cd..ae228f6 100644
+--- a/lib/features/attendance/domain/entities/attendance_record.dart
++++ b/lib/features/attendance/domain/entities/attendance_record.dart
+@@ -18,6 +18,9 @@ class AttendanceRecord extends Equatable {
+     required this.checkInTime,
+     this.checkOutTime,
+     required this.status,
++    this.workDate,
++    this.deductionId,
++    this.isDeductionCancelled = false,
+     this.delayMinutes = 0,
+     this.deductionAmount = 0.0,
+     this.isDeductionAdjusted = false,
+@@ -30,10 +33,15 @@ class AttendanceRecord extends Equatable {
+   final String checkInTime;
+   final String? checkOutTime;
+   final AttendanceStatus status;
++  final String? workDate;
++  final String? deductionId;
++  final bool isDeductionCancelled;
+   final int delayMinutes;
+   final double deductionAmount;
+   final bool isDeductionAdjusted;
+ 
++  bool get canAdjustDeduction => deductionId != null && !isDeductionCancelled;
++
+   String get initials {
+     final parts = employeeName.trim().split(' ');
+     if (parts.length >= 2) {
+@@ -54,6 +62,9 @@ class AttendanceRecord extends Equatable {
+       checkInTime: checkInTime,
+       checkOutTime: checkOutTime,
+       status: status,
++      workDate: workDate,
++      deductionId: deductionId,
++      isDeductionCancelled: isDeductionCancelled,
+       delayMinutes: delayMinutes,
+       deductionAmount: deductionAmount ?? this.deductionAmount,
+       isDeductionAdjusted: isDeductionAdjusted ?? this.isDeductionAdjusted,
+@@ -69,6 +80,9 @@ class AttendanceRecord extends Equatable {
+     checkInTime,
+     checkOutTime,
+     status,
++    workDate,
++    deductionId,
++    isDeductionCancelled,
+     delayMinutes,
+     deductionAmount,
+     isDeductionAdjusted,
+diff --git a/lib/features/attendance/presentation/screens/attendance_details_screen.dart b/lib/features/attendance/presentation/screens/attendance_details_screen.dart
+index 1957d3e..e656eb7 100644
+--- a/lib/features/attendance/presentation/screens/attendance_details_screen.dart
++++ b/lib/features/attendance/presentation/screens/attendance_details_screen.dart
+@@ -1,397 +1,81 @@
+ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
+-import '../../../../core/theme/app_colors.dart';
++
+ import '../../../../core/theme/app_dimens.dart';
+-import '../../../../core/theme/app_typography.dart';
++import '../../../../core/widgets/widgets.dart';
+ import '../../domain/entities/attendance_record.dart';
+ 
+-class AttendanceDetailsScreen extends StatelessWidget {
++class AttendanceDetailsScreen extends StatefulWidget {
++  const AttendanceDetailsScreen({super.key, required this.record});
++
+   final AttendanceRecord record;
+ 
+-  const AttendanceDetailsScreen({super.key, required this.record});
++  @override
++  State<AttendanceDetailsScreen> createState() =>
++      _AttendanceDetailsScreenState();
++}
++
++class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
++  late AttendanceRecord _record = widget.record;
++
++  Future<void> _adjustDeduction() async {
++    final amount = await context.push<double>(
++      '/attendance/adjust',
++      extra: _record,
++    );
++    if (!mounted || amount == null) return;
++    setState(() {
++      _record = _record.copyWith(
++        deductionAmount: amount,
++        isDeductionAdjusted: true,
++      );
++    });
++    ScaffoldMessenger.of(
++      context,
++    ).showSnackBar(const SnackBar(content: Text('تم حفظ تعديل الخصم')));
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final hasDelay = record.delayMinutes > 0;
+-
++    final record = _record;
++    final theme = Theme.of(context);
++    final fields = <String, String>{
++      if (record.workDate case final String date) 'التاريخ': date,
++      'الحضور': record.checkInTime,
++      'الانصراف': record.checkOutTime ?? 'لم يُسجّل بعد',
++      if (record.delayMinutes > 0) 'التأخير': '${record.delayMinutes} دقيقة',
++      if (record.deductionId != null)
++        'قيمة الخصم': '${record.deductionAmount.toStringAsFixed(2)} ج.م',
++    };
+     return Scaffold(
+-      backgroundColor: AppColors.surface,
+-      appBar: AppBar(
+-        title: const Text('تفاصيل سجل الحضور'),
+-        actions: [
+-          IconButton(
+-            icon: const Icon(Icons.history_outlined),
+-            tooltip: 'سجل الحضور التاريخي',
+-            onPressed: () =>
+-                context.push('/attendance/history', extra: record.employeeName),
+-          ),
+-        ],
+-      ),
+-      body: SingleChildScrollView(
++      appBar: AppBar(title: const Text('تفاصيل سجل الحضور')),
++      body: ListView(
+         padding: const EdgeInsets.all(AppDimens.paddingMd),
+-        child: Column(
+-          crossAxisAlignment: CrossAxisAlignment.stretch,
+-          children: [
+-            // Status Context Banner
+-            Row(
+-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
++        children: [
++          RmsCard(
++            child: Column(
++              crossAxisAlignment: CrossAxisAlignment.stretch,
+               children: [
+-                Row(
+-                  children: [
+-                    const Icon(
+-                      Icons.calendar_today,
+-                      size: 16,
+-                      color: AppColors.primary,
+-                    ),
+-                    const SizedBox(width: 6),
+-                    Text(
+-                      'الثلاثاء، 16 أبريل 2024',
+-                      style: AppTypography.labelSm.copyWith(
+-                        color: AppColors.secondary,
+-                      ),
+-                    ),
+-                  ],
+-                ),
+-                Container(
+-                  padding: const EdgeInsets.symmetric(
+-                    horizontal: 8,
+-                    vertical: 2,
+-                  ),
+-                  decoration: BoxDecoration(
+-                    color: hasDelay
+-                        ? AppColors.errorContainer
+-                        : const Color(0xFFEAF5EA),
+-                    borderRadius: BorderRadius.circular(AppDimens.radiusFull),
+-                  ),
+-                  child: Text(
+-                    hasDelay ? 'حالة غير مكتملة (تأخير)' : 'منضبط',
+-                    style: AppTypography.labelSm.copyWith(
+-                      color: hasDelay
+-                          ? AppColors.onErrorContainer
+-                          : const Color(0xFF2E8B2E),
+-                      fontWeight: FontWeight.bold,
+-                      fontSize: 11,
+-                    ),
+-                  ),
+-                ),
+-              ],
+-            ),
+-            const SizedBox(height: AppDimens.paddingMd),
+-
+-            // Employee Card
+-            Container(
+-              padding: const EdgeInsets.all(AppDimens.paddingMd),
+-              decoration: BoxDecoration(
+-                color: AppColors.surfaceContainerLowest,
+-                borderRadius: BorderRadius.circular(AppDimens.radiusXl),
+-                boxShadow: const [
+-                  BoxShadow(
+-                    color: Color(0x06000000),
+-                    blurRadius: 4,
+-                    offset: Offset(0, 1),
+-                  ),
+-                ],
+-              ),
+-              child: Row(
+-                children: [
+-                  Container(
+-                    width: 48,
+-                    height: 48,
+-                    decoration: const BoxDecoration(
+-                      color: AppColors.primaryFixed,
+-                      shape: BoxShape.circle,
+-                    ),
+-                    child: const Icon(
+-                      Icons.person,
+-                      color: AppColors.primary,
+-                      size: 26,
+-                    ),
+-                  ),
+-                  const SizedBox(width: AppDimens.paddingMd),
+-                  Expanded(
+-                    child: Column(
+-                      crossAxisAlignment: CrossAxisAlignment.start,
+-                      children: [
+-                        Text(
+-                          record.employeeName,
+-                          style: AppTypography.labelMd.copyWith(
+-                            fontWeight: FontWeight.bold,
+-                          ),
+-                        ),
+-                        Text(
+-                          record.role,
+-                          style: AppTypography.bodySm.copyWith(
+-                            color: AppColors.secondary,
+-                            fontSize: 12,
+-                          ),
+-                        ),
+-                        Text(
+-                          'الفرع الرئيسي - وسط البلد (#01)',
+-                          style: AppTypography.labelSm.copyWith(
+-                            color: AppColors.secondary,
+-                            fontSize: 11,
+-                          ),
+-                        ),
+-                      ],
+-                    ),
+-                  ),
++                Text(record.employeeName, style: theme.textTheme.titleLarge),
++                if (record.role.isNotEmpty) Text(record.role),
++                const SizedBox(height: AppDimens.paddingMd),
++                for (final field in fields.entries) ...[
++                  Text(field.key, style: theme.textTheme.labelMedium),
++                  Text(field.value, style: theme.textTheme.bodyLarge),
++                  const SizedBox(height: 8),
+                 ],
+-              ),
++                if (record.isDeductionAdjusted) const Text('معدل إدارياً'),
++              ],
+             ),
++          ),
++          if (record.canAdjustDeduction) ...[
+             const SizedBox(height: AppDimens.paddingMd),
+-
+-            // Schedule vs Actual Comparison
+-            Container(
+-              padding: const EdgeInsets.all(AppDimens.paddingLg),
+-              decoration: BoxDecoration(
+-                color: AppColors.surfaceContainerLowest,
+-                borderRadius: BorderRadius.circular(AppDimens.radiusXl),
+-                boxShadow: const [
+-                  BoxShadow(
+-                    color: Color(0x06000000),
+-                    blurRadius: 4,
+-                    offset: Offset(0, 1),
+-                  ),
+-                ],
+-              ),
+-              child: Column(
+-                crossAxisAlignment: CrossAxisAlignment.start,
+-                children: [
+-                  Row(
+-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+-                    children: [
+-                      Row(
+-                        children: [
+-                          const Icon(
+-                            Icons.timelapse,
+-                            color: AppColors.primary,
+-                            size: 20,
+-                          ),
+-                          const SizedBox(width: 6),
+-                          Text(
+-                            'سجل البصمة مقابل المواعيد',
+-                            style: AppTypography.labelMd.copyWith(
+-                              fontWeight: FontWeight.bold,
+-                            ),
+-                          ),
+-                        ],
+-                      ),
+-                      Container(
+-                        padding: const EdgeInsets.symmetric(
+-                          horizontal: 8,
+-                          vertical: 2,
+-                        ),
+-                        decoration: BoxDecoration(
+-                          color: AppColors.surfaceContainer,
+-                          borderRadius: BorderRadius.circular(
+-                            AppDimens.radiusFull,
+-                          ),
+-                        ),
+-                        child: Text(
+-                          'الوردية الصباحية A',
+-                          style: AppTypography.labelSm.copyWith(
+-                            color: AppColors.onSurfaceVariant,
+-                            fontSize: 10,
+-                          ),
+-                        ),
+-                      ),
+-                    ],
+-                  ),
+-                  const SizedBox(height: AppDimens.paddingMd),
+-
+-                  Row(
+-                    children: [
+-                      Expanded(
+-                        child: Container(
+-                          padding: const EdgeInsets.all(AppDimens.paddingMd),
+-                          decoration: BoxDecoration(
+-                            color: AppColors.surfaceContainerLow,
+-                            borderRadius: BorderRadius.circular(
+-                              AppDimens.radiusLg,
+-                            ),
+-                          ),
+-                          child: Column(
+-                            crossAxisAlignment: CrossAxisAlignment.start,
+-                            children: [
+-                              Text(
+-                                'الموعد المجدول',
+-                                style: AppTypography.labelSm.copyWith(
+-                                  color: AppColors.secondary,
+-                                ),
+-                              ),
+-                              const SizedBox(height: 4),
+-                              Text(
+-                                '09:00 ص - 05:00 م',
+-                                style: AppTypography.labelMd.copyWith(
+-                                  fontWeight: FontWeight.bold,
+-                                  fontFamily: 'monospace',
+-                                ),
+-                              ),
+-                              const SizedBox(height: 2),
+-                              Text(
+-                                '8 ساعات عمل',
+-                                style: AppTypography.labelSm.copyWith(
+-                                  color: AppColors.secondary,
+-                                  fontSize: 10,
+-                                ),
+-                              ),
+-                            ],
+-                          ),
+-                        ),
+-                      ),
+-                      const SizedBox(width: 8),
+-                      Expanded(
+-                        child: Container(
+-                          padding: const EdgeInsets.all(AppDimens.paddingMd),
+-                          decoration: BoxDecoration(
+-                            color: hasDelay
+-                                ? AppColors.errorContainer.withValues(
+-                                    alpha: 0.4,
+-                                  )
+-                                : AppColors.surfaceContainerLow,
+-                            borderRadius: BorderRadius.circular(
+-                              AppDimens.radiusLg,
+-                            ),
+-                          ),
+-                          child: Column(
+-                            crossAxisAlignment: CrossAxisAlignment.start,
+-                            children: [
+-                              Text(
+-                                'البصمة الفعلية',
+-                                style: AppTypography.labelSm.copyWith(
+-                                  color: hasDelay
+-                                      ? AppColors.error
+-                                      : AppColors.secondary,
+-                                ),
+-                              ),
+-                              const SizedBox(height: 4),
+-                              Text(
+-                                '${record.checkInTime} - ${record.checkOutTime}',
+-                                style: AppTypography.labelMd.copyWith(
+-                                  fontWeight: FontWeight.bold,
+-                                  fontFamily: 'monospace',
+-                                  color: hasDelay
+-                                      ? AppColors.error
+-                                      : AppColors.onSurface,
+-                                ),
+-                              ),
+-                              const SizedBox(height: 2),
+-                              Text(
+-                                hasDelay
+-                                    ? 'تأخير ${record.delayMinutes} دقيقة'
+-                                    : 'حضور منضبط',
+-                                style: AppTypography.labelSm.copyWith(
+-                                  color: hasDelay
+-                                      ? AppColors.error
+-                                      : const Color(0xFF2E8B2E),
+-                                  fontWeight: FontWeight.bold,
+-                                  fontSize: 10,
+-                                ),
+-                              ),
+-                            ],
+-                          ),
+-                        ),
+-                      ),
+-                    ],
+-                  ),
+-                  const SizedBox(height: AppDimens.paddingMd),
+-
+-                  // Deduction Info
+-                  Container(
+-                    padding: const EdgeInsets.all(12),
+-                    decoration: BoxDecoration(
+-                      color: AppColors.surfaceContainerLow,
+-                      borderRadius: BorderRadius.circular(AppDimens.radiusLg),
+-                    ),
+-                    child: Row(
+-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+-                      children: [
+-                        Column(
+-                          crossAxisAlignment: CrossAxisAlignment.start,
+-                          children: [
+-                            Text(
+-                              'الخصم الآلي المسجل',
+-                              style: AppTypography.labelSm.copyWith(
+-                                color: AppColors.secondary,
+-                              ),
+-                            ),
+-                            Text(
+-                              '${record.deductionAmount.toStringAsFixed(2)} ج.م',
+-                              style: AppTypography.headlineSm.copyWith(
+-                                fontWeight: FontWeight.bold,
+-                                color: hasDelay
+-                                    ? AppColors.error
+-                                    : AppColors.onSurface,
+-                                fontSize: 18,
+-                              ),
+-                            ),
+-                          ],
+-                        ),
+-                        if (record.isDeductionAdjusted)
+-                          Container(
+-                            padding: const EdgeInsets.symmetric(
+-                              horizontal: 8,
+-                              vertical: 3,
+-                            ),
+-                            decoration: BoxDecoration(
+-                              color: AppColors.primaryContainer.withValues(
+-                                alpha: 0.15,
+-                              ),
+-                              borderRadius: BorderRadius.circular(
+-                                AppDimens.radiusFull,
+-                              ),
+-                            ),
+-                            child: Text(
+-                              'معدل إدارياً',
+-                              style: AppTypography.labelSm.copyWith(
+-                                color: AppColors.primary,
+-                                fontWeight: FontWeight.bold,
+-                              ),
+-                            ),
+-                          ),
+-                      ],
+-                    ),
+-                  ),
+-                ],
+-              ),
++            RmsPrimaryButton(
++              label: 'تعديل الخصم الإداري',
++              onPressed: _adjustDeduction,
+             ),
+-            const SizedBox(height: AppDimens.paddingLg),
+-
+-            // Action Buttons
+-            ElevatedButton.icon(
+-              onPressed: () =>
+-                  context.push('/attendance/adjust', extra: record),
+-              icon: const Icon(Icons.edit_note),
+-              label: const Text('تعديل الخصم الإداري (ATT-03)'),
+-              style: ElevatedButton.styleFrom(
+-                backgroundColor: AppColors.primary,
+-                foregroundColor: Colors.white,
+-                padding: const EdgeInsets.symmetric(vertical: 14),
+-                shape: RoundedRectangleBorder(
+-                  borderRadius: BorderRadius.circular(AppDimens.radiusXl),
+-                ),
+-              ),
+-            ),
+-            const SizedBox(height: 8),
+-            OutlinedButton.icon(
+-              onPressed: () => context.push(
+-                '/attendance/history',
+-                extra: record.employeeName,
+-              ),
+-              icon: const Icon(Icons.calendar_month_outlined),
+-              label: const Text('عرض سجل الحضور الشهري (ATT-04)'),
+-              style: OutlinedButton.styleFrom(
+-                foregroundColor: AppColors.onSurface,
+-                side: const BorderSide(color: AppColors.outlineVariant),
+-                padding: const EdgeInsets.symmetric(vertical: 14),
+-                shape: RoundedRectangleBorder(
+-                  borderRadius: BorderRadius.circular(AppDimens.radiusXl),
+-                ),
+-              ),
+-            ),
+-            const SizedBox(height: 24),
+           ],
+-        ),
++        ],
+       ),
+     );
+   }
+diff --git a/lib/features/attendance/presentation/screens/attendance_list_screen.dart b/lib/features/attendance/presentation/screens/attendance_list_screen.dart
+index 362c0f6..a8ea3d7 100644
+--- a/lib/features/attendance/presentation/screens/attendance_list_screen.dart
++++ b/lib/features/attendance/presentation/screens/attendance_list_screen.dart
+@@ -6,6 +6,7 @@ import '../../../../core/theme/app_colors.dart';
+ import '../../../../core/theme/app_dimens.dart';
+ import '../../../../core/theme/app_typography.dart';
+ import '../../../../core/di/service_locator.dart';
++import '../../../../core/network/authenticated_api.dart';
+ import '../../data/repositories/api_attendance_repository.dart';
+ import '../../../employees/domain/entities/employee.dart';
+ import '../../../employees/domain/repositories/employee_repository.dart';
+@@ -18,10 +19,9 @@ class AttendanceListScreen extends StatefulWidget {
+ }
+ 
+ class _AttendanceListScreenState extends State<AttendanceListScreen> {
+-  String _selectedFilter = 'all';
+-
+   List<Employee> _employees = [];
+   bool _isLoading = true;
++  final _busyEmployees = <String>{};
+ 
+   @override
+   void initState() {
+@@ -82,26 +82,6 @@ class _AttendanceListScreenState extends State<AttendanceListScreen> {
+       body: SafeArea(
+         child: Column(
+           children: [
+-            // Filter Pills
+-            SingleChildScrollView(
+-              scrollDirection: Axis.horizontal,
+-              padding: const EdgeInsets.symmetric(
+-                horizontal: AppSpacing.margin,
+-                vertical: AppSpacing.sm,
+-              ),
+-              child: Row(
+-                children: [
+-                  _buildFilterPill('all', 'الموظفون (${_employees.length})'),
+-                  const SizedBox(width: AppSpacing.sm),
+-                  _buildFilterPill('present', 'تسجيل حضور'),
+-                  const SizedBox(width: AppSpacing.sm),
+-                  _buildFilterPill('late', 'تسجيل انصراف'),
+-                  const SizedBox(width: AppSpacing.sm),
+-                  _buildFilterPill('absent', 'تعديل خصم'),
+-                ],
+-              ),
+-            ),
+-
+             // Live Ledger Header
+             Padding(
+               padding: const EdgeInsets.symmetric(
+@@ -114,29 +94,11 @@ class _AttendanceListScreenState extends State<AttendanceListScreen> {
+                   Row(
+                     children: [
+                       Text(
+-                        'سجلات البصمة اليوم',
++                        'الموظفون (${_employees.length})',
+                         style: AppTypography.labelMd.copyWith(
+                           fontWeight: FontWeight.w700,
+                         ),
+                       ),
+-                      const SizedBox(width: 8),
+-                      Container(
+-                        padding: const EdgeInsets.symmetric(
+-                          horizontal: 8,
+-                          vertical: 2,
+-                        ),
+-                        decoration: const BoxDecoration(
+-                          color: AppColors.surfaceContainerHigh,
+-                          borderRadius: AppRadius.fullAll,
+-                        ),
+-                        child: Text(
+-                          'الوردية الصباحية',
+-                          style: AppTypography.labelSm.copyWith(
+-                            fontSize: 11,
+-                            color: AppColors.secondary,
+-                          ),
+-                        ),
+-                      ),
+                     ],
+                   ),
+                   TextButton.icon(
+@@ -174,56 +136,62 @@ class _AttendanceListScreenState extends State<AttendanceListScreen> {
+     );
+   }
+ 
+-  Widget _buildFilterPill(String id, String label) {
+-    final isSelected = _selectedFilter == id;
+-    return GestureDetector(
+-      onTap: () => setState(() => _selectedFilter = id),
+-      child: Container(
+-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+-        decoration: BoxDecoration(
+-          color: isSelected
+-              ? AppColors.primary
+-              : AppColors.surfaceContainerLowest,
+-          borderRadius: AppRadius.fullAll,
+-          boxShadow: AppShadows.sm,
+-        ),
+-        child: Text(
+-          label,
+-          style: AppTypography.labelSm.copyWith(
+-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+-            color: isSelected ? Colors.white : AppColors.onSurface,
++  Future<void> _runAction(Employee employee, String action) async {
++    if (_busyEmployees.contains(employee.id)) return;
++    setState(() => _busyEmployees.add(employee.id));
++    final repository = sl<ApiAttendanceRepository>();
++    try {
++      if (action == 'record') {
++        final today = DateUtils.dateOnly(DateTime.now());
++        final date = await showDatePicker(
++          context: context,
++          initialDate: today,
++          firstDate: DateTime(2000),
++          lastDate: today,
++        );
++        if (date == null || !mounted) return;
++        final record = await repository.getRecord(
++          employee: employee,
++          workDate: date,
++        );
++        if (mounted) await context.push('/attendance/details', extra: record);
++        return;
++      }
++      final checkIn = action == 'in';
++      if (checkIn) {
++        await repository.checkIn(employeeId: employee.id);
++      } else {
++        await repository.checkOut(employeeId: employee.id);
++      }
++      if (mounted) {
++        ScaffoldMessenger.of(context).showSnackBar(
++          SnackBar(
++            content: Text(
++              checkIn ? 'تم تسجيل حضور الموظف' : 'تم تسجيل انصراف الموظف',
++            ),
+           ),
+-        ),
+-      ),
+-    );
+-  }
+-
+-  Widget _buildEmployeeAttendanceCard(Employee employee) {
+-    Future<void> runAction(bool checkIn) async {
+-      try {
+-        if (checkIn) {
+-          await sl<ApiAttendanceRepository>().checkIn(employeeId: employee.id);
+-        } else {
+-          await sl<ApiAttendanceRepository>().checkOut(employeeId: employee.id);
+-        }
+-        if (mounted) {
+-          ScaffoldMessenger.of(context).showSnackBar(
+-            SnackBar(
+-              content: Text(
+-                checkIn ? 'تم تسجيل حضور الموظف' : 'تم تسجيل انصراف الموظف',
+-              ),
++        );
++      }
++    } catch (error) {
++      if (mounted) {
++        ScaffoldMessenger.of(context).showSnackBar(
++          SnackBar(
++            content: Text(
++              action == 'record' &&
++                      error is ApiException &&
++                      error.statusCode == 404
++                  ? 'مفيش سجل حضور للموظف في التاريخ ده'
++                  : 'تعذر تنفيذ إجراء الحضور: $error',
+             ),
+-          );
+-        }
+-      } catch (error) {
+-        if (mounted) {
+-          ScaffoldMessenger.of(context).showSnackBar(
+-            SnackBar(content: Text('تعذر تنفيذ إجراء الحضور: $error')),
+-          );
+-        }
++          ),
++        );
+       }
++    } finally {
++      if (mounted) setState(() => _busyEmployees.remove(employee.id));
+     }
++  }
+ 
++  Widget _buildEmployeeAttendanceCard(Employee employee) {
+     return Card(
+       child: Padding(
+         padding: const EdgeInsets.all(AppSpacing.md),
+@@ -246,10 +214,15 @@ class _AttendanceListScreenState extends State<AttendanceListScreen> {
+               ),
+             ),
+             PopupMenuButton<String>(
+-              onSelected: (value) => runAction(value == 'in'),
++              enabled: !_busyEmployees.contains(employee.id),
++              onSelected: (value) => _runAction(employee, value),
+               itemBuilder: (_) => const [
+                 PopupMenuItem(value: 'in', child: Text('تسجيل حضور')),
+                 PopupMenuItem(value: 'out', child: Text('تسجيل انصراف')),
++                PopupMenuItem(
++                  value: 'record',
++                  child: Text('عرض سجل حضور بتاريخ'),
++                ),
+               ],
+             ),
+           ],
+diff --git a/lib/features/attendance/presentation/screens/deduction_adjustment_screen.dart b/lib/features/attendance/presentation/screens/deduction_adjustment_screen.dart
+index f5b2e41..cfafc83 100644
+--- a/lib/features/attendance/presentation/screens/deduction_adjustment_screen.dart
++++ b/lib/features/attendance/presentation/screens/deduction_adjustment_screen.dart
+@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
+ import 'package:material_symbols_icons/symbols.dart';
+ 
++import '../../../../core/di/service_locator.dart';
+ import '../../../../core/theme/app_colors.dart';
+ import '../../../../core/theme/app_dimens.dart';
+ import '../../../../core/theme/app_typography.dart';
+ import '../../../../core/widgets/widgets.dart';
++import '../../data/repositories/api_attendance_repository.dart';
+ import '../../domain/entities/attendance_record.dart';
+ 
+ class DeductionAdjustmentScreen extends StatefulWidget {
+@@ -22,12 +24,13 @@ class _DeductionAdjustmentScreenState extends State<DeductionAdjustmentScreen> {
+   late final TextEditingController _amountController;
+   final _reasonController = TextEditingController();
+   String _presetReason = 'traffic'; // traffic, medical, official
++  bool _saving = false;
+ 
+   @override
+   void initState() {
+     super.initState();
+     _amountController = TextEditingController(
+-      text: widget.record.deductionAmount.toStringAsFixed(0),
++      text: widget.record.deductionAmount.toStringAsFixed(2),
+     );
+   }
+ 
+@@ -47,18 +50,46 @@ class _DeductionAdjustmentScreenState extends State<DeductionAdjustmentScreen> {
+   void _onHalf() {
+     setState(() {
+       final half = widget.record.deductionAmount / 2;
+-      _amountController.text = half.toStringAsFixed(0);
++      _amountController.text = half.toStringAsFixed(2);
+     });
+   }
+ 
+-  void _onSave() {
+-    ScaffoldMessenger.of(context).showSnackBar(
+-      const SnackBar(
+-        content: Text(
+-          'لم يُحفظ التعديل. معرّف الخصم الفعلي غير متاح في شاشة الحضور الحالية.',
+-        ),
+-      ),
+-    );
++  Future<void> _onSave() async {
++    final id = widget.record.deductionId;
++    if (_saving || id == null || !widget.record.canAdjustDeduction) return;
++    final amount = double.tryParse(_amountController.text.trim());
++    if (amount == null || !amount.isFinite || amount < 0) {
++      ScaffoldMessenger.of(
++        context,
++      ).showSnackBar(const SnackBar(content: Text('أدخل قيمة خصم صالحة')));
++      return;
++    }
++    final reason = switch (_presetReason) {
++      'medical' => 'ظرف طبي طارئ',
++      'official' => 'تكليف إداري خارجي',
++      _ => 'عطل مواصلات عامة',
++    };
++    final notes = _reasonController.text.trim();
++    setState(() => _saving = true);
++    try {
++      final saved = await sl<ApiAttendanceRepository>().adjustDeduction(
++        deductionId: id,
++        newAmount: amount,
++        cancel: false,
++        reason: notes.isEmpty ? reason : '$reason - $notes',
++      );
++      if (mounted) {
++        context.pop((saved['effective_amount'] as num).toDouble());
++      }
++    } catch (error) {
++      if (mounted) {
++        ScaffoldMessenger.of(
++          context,
++        ).showSnackBar(SnackBar(content: Text('تعذر حفظ تعديل الخصم: $error')));
++      }
++    } finally {
++      if (mounted) setState(() => _saving = false);
++    }
+   }
+ 
+   @override
+@@ -212,7 +243,9 @@ class _DeductionAdjustmentScreenState extends State<DeductionAdjustmentScreen> {
+                       label: 'قيمة الخصم المعدلة النهائية (ج.م)',
+                       controller: _amountController,
+                       prefixIcon: Symbols.payments,
+-                      keyboardType: TextInputType.number,
++                      keyboardType: const TextInputType.numberWithOptions(
++                        decimal: true,
++                      ),
+                     ),
+                     const SizedBox(height: AppSpacing.lg),
+ 
+@@ -255,7 +288,10 @@ class _DeductionAdjustmentScreenState extends State<DeductionAdjustmentScreen> {
+                       label: 'اعتماد تعديل الخصم الإداري',
+                       loadingLabel: 'جاري الاعتماد...',
+                       icon: Symbols.check,
+-                      onPressed: _onSave,
++                      isLoading: _saving,
++                      onPressed: widget.record.canAdjustDeduction
++                          ? _onSave
++                          : null,
+                     ),
+                   ],
+                 ),
+diff --git a/lib/features/auth/data/repositories/api_auth_repository.dart b/lib/features/auth/data/repositories/api_auth_repository.dart
+index 0ee3860..a92f8c2 100644
+--- a/lib/features/auth/data/repositories/api_auth_repository.dart
++++ b/lib/features/auth/data/repositories/api_auth_repository.dart
+@@ -218,11 +218,13 @@ class ApiAuthRepository implements AuthRepository {
+         .whereType<Map>()
+         .map(
+           (user) => {
++            'id': '${user['id'] ?? ''}',
+             'name': '${user['name'] ?? ''}',
+             'email': '${user['email'] ?? ''}',
+             'role': '${user['role'] ?? ''}',
+             'branch': '${user['branch_id'] ?? ''}',
+             'isActive': user['is_active'] == true,
++            'lockedUntil': user['locked_until'],
+           },
+         )
+         .toList();
+diff --git a/lib/features/auth/presentation/screens/ceo_account_management_screen.dart b/lib/features/auth/presentation/screens/ceo_account_management_screen.dart
+index e8485d7..b54113c 100644
+--- a/lib/features/auth/presentation/screens/ceo_account_management_screen.dart
++++ b/lib/features/auth/presentation/screens/ceo_account_management_screen.dart
+@@ -1,9 +1,12 @@
+ import 'package:flutter/material.dart';
+ import 'package:go_router/go_router.dart';
+ import '../../../../core/di/service_locator.dart';
++import '../../../../core/network/authenticated_api.dart';
+ import '../../../../core/theme/app_colors.dart';
+ import '../../../../core/theme/app_dimens.dart';
+ import '../../../../core/theme/app_typography.dart';
++import '../../../branches/domain/entities/branch.dart';
++import '../../../branches/domain/repositories/branch_repository.dart';
+ import '../../domain/repositories/auth_repository.dart';
+ 
+ class CeoAccountManagementScreen extends StatefulWidget {
+@@ -21,13 +24,13 @@ class _CeoAccountManagementScreenState
+   final _formKey = GlobalKey<FormState>();
+   final _nameController = TextEditingController();
+   final _emailController = TextEditingController();
+-  final _phoneController = TextEditingController();
+-  final _passwordController = TextEditingController(text: 'RMS@2024Ops');
++  final _passwordController = TextEditingController();
+ 
+   String _selectedRole = 'BRANCH_MANAGER';
+-  String _selectedBranch = '';
+-  bool _mustChangePassword = true;
++  String? _selectedBranch;
+   bool _isSubmitting = false;
++  List<Branch> _branches = [];
++  final _updatingAccounts = <String>{};
+ 
+   List<Map<String, dynamic>> _accounts = [];
+   bool _isLoadingAccounts = true;
+@@ -36,6 +39,79 @@ class _CeoAccountManagementScreenState
+   void initState() {
+     super.initState();
+     _loadAccounts();
++    _loadBranches();
++  }
++
++  Future<void> _loadBranches() async {
++    try {
++      final branches = await sl<BranchRepository>().getBranches();
++      if (mounted) {
++        setState(
++          () =>
++              _branches = branches.where((branch) => branch.isActive).toList(),
++        );
++      }
++    } catch (error) {
++      if (mounted) {
++        ScaffoldMessenger.of(
++          context,
++        ).showSnackBar(SnackBar(content: Text('تعذر تحميل الفروع: $error')));
++      }
++    }
++  }
++
++  Future<void> _updateAccount(
++    Map<String, dynamic> account,
++    String action,
++  ) async {
++    final id = account['id'] as String;
++    if (id.isEmpty || _updatingAccounts.contains(id)) return;
++    final active = account['isActive'] as bool;
++    if (action == 'status' && active) {
++      final confirmed = await showDialog<bool>(
++        context: context,
++        builder: (dialogContext) => AlertDialog(
++          title: Text('تعطيل حساب ${account['name']}؟'),
++          actions: [
++            TextButton(
++              onPressed: () => Navigator.pop(dialogContext, false),
++              child: const Text('إلغاء'),
++            ),
++            TextButton(
++              onPressed: () => Navigator.pop(dialogContext, true),
++              child: const Text('تعطيل'),
++            ),
++          ],
++        ),
++      );
++      if (!mounted || confirmed != true || _updatingAccounts.contains(id)) {
++        return;
++      }
++    }
++    setState(() => _updatingAccounts.add(id));
++    try {
++      final api = sl<AuthenticatedApi>();
++      final path = '/api/v1/users/${Uri.encodeComponent(id)}';
++      if (action == 'unlock') {
++        await api.post('$path/unlock', {});
++      } else {
++        await api.patch('$path/status', {'is_active': !active});
++      }
++      await _loadAccounts();
++      if (mounted) {
++        ScaffoldMessenger.of(
++          context,
++        ).showSnackBar(const SnackBar(content: Text('تم تحديث الحساب')));
++      }
++    } catch (error) {
++      if (mounted) {
++        ScaffoldMessenger.of(
++          context,
++        ).showSnackBar(SnackBar(content: Text('تعذر تحديث الحساب: $error')));
++      }
++    } finally {
++      if (mounted) setState(() => _updatingAccounts.remove(id));
++    }
+   }
+ 
+   Future<void> _loadAccounts() async {
+@@ -67,7 +143,6 @@ class _CeoAccountManagementScreenState
+   void dispose() {
+     _nameController.dispose();
+     _emailController.dispose();
+-    _phoneController.dispose();
+     _passwordController.dispose();
+     super.dispose();
+   }
+@@ -81,10 +156,11 @@ class _CeoAccountManagementScreenState
+         email: _emailController.text.trim(),
+         password: _passwordController.text,
+         role: _selectedRole,
+-        branchId: _selectedBranch.isEmpty ? null : _selectedBranch,
++        branchId: _selectedRole == 'BRANCH_MANAGER' ? _selectedBranch : null,
+       );
+       await _loadAccounts();
+       if (mounted) {
++        _passwordController.clear();
+         setState(() => _selectedTabIndex = 0);
+         ScaffoldMessenger.of(context).showSnackBar(
+           const SnackBar(content: Text('تم حفظ الحساب في قاعدة البيانات')),
+@@ -362,10 +438,22 @@ class _CeoAccountManagementScreenState
+                   ],
+                 ),
+               ),
+-              IconButton(
+-                icon: const Icon(Icons.more_vert, color: AppColors.secondary),
+-                onPressed: () {},
+-              ),
++              if (acc['id'] is String && acc['role'] != 'CEO')
++                PopupMenuButton<String>(
++                  enabled: !_updatingAccounts.contains(acc['id']),
++                  onSelected: (action) => _updateAccount(acc, action),
++                  itemBuilder: (_) => [
++                    PopupMenuItem(
++                      value: 'status',
++                      child: Text(isActive ? 'تعطيل الحساب' : 'تفعيل الحساب'),
++                    ),
++                    if (acc['lockedUntil'] != null)
++                      const PopupMenuItem(
++                        value: 'unlock',
++                        child: Text('إلغاء قفل الحساب'),
++                      ),
++                  ],
++                ),
+             ],
+           ),
+         );
+@@ -459,28 +547,34 @@ class _CeoAccountManagementScreenState
+             const SizedBox(height: AppDimens.paddingMd),
+ 
+             // Branch dropdown
+-            DropdownButtonFormField<String>(
+-              isExpanded: true,
+-              initialValue: _selectedBranch,
+-              decoration: const InputDecoration(
+-                labelText: 'الفرع المخصص *',
+-                border: OutlineInputBorder(),
+-                prefixIcon: Icon(Icons.storefront_outlined),
+-              ),
+-              items: const [
+-                DropdownMenuItem(
+-                  value: '',
+-                  child: Text('بدون فرع - يمكن التعيين من النظام'),
++            if (_selectedRole == 'BRANCH_MANAGER')
++              DropdownButtonFormField<String>(
++                isExpanded: true,
++                initialValue: _selectedBranch,
++                decoration: const InputDecoration(
++                  labelText: 'الفرع المخصص *',
++                  border: OutlineInputBorder(),
++                  prefixIcon: Icon(Icons.storefront_outlined),
+                 ),
+-              ],
+-              onChanged: (val) =>
+-                  setState(() => _selectedBranch = val ?? _selectedBranch),
+-            ),
++                items: [
++                  for (final branch in _branches)
++                    DropdownMenuItem(
++                      value: branch.id,
++                      child: Text(branch.name),
++                    ),
++                ],
++                validator: (value) =>
++                    value == null || value.isEmpty ? 'اختار فرع المدير' : null,
++                onChanged: (val) => setState(() => _selectedBranch = val),
++              ),
+             const SizedBox(height: AppDimens.paddingMd),
+ 
+             // Temporary Password
+             TextFormField(
+               controller: _passwordController,
++              obscureText: true,
++              validator: (value) =>
++                  value == null || value.isEmpty ? 'مطلوب' : null,
+               decoration: const InputDecoration(
+                 labelText: 'كلمة المرور المؤقتة',
+                 border: OutlineInputBorder(),
+@@ -490,17 +584,7 @@ class _CeoAccountManagementScreenState
+             const SizedBox(height: AppDimens.paddingSm),
+ 
+             // Must change password checkbox
+-            CheckboxListTile(
+-              value: _mustChangePassword,
+-              contentPadding: EdgeInsets.zero,
+-              controlAffinity: ListTileControlAffinity.leading,
+-              title: const Text(
+-                'إلزام الموظف بتغيير كلمة المرور عند أول تسجيل دخول',
+-              ),
+-              activeColor: AppColors.primary,
+-              onChanged: (val) =>
+-                  setState(() => _mustChangePassword = val ?? true),
+-            ),
++            const Text('هيطلب النظام تغيير كلمة المرور عند أول تسجيل دخول.'),
+             const SizedBox(height: AppDimens.paddingLg),
+ 
+             // Submit Button

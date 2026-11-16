@@ -75,6 +75,42 @@ jobs:
         run: python3 tests/integration/feature_write_smoke.py
       - name: Replay the 50 QA requests
         run: python3 tests/integration/backend_qa_recheck.py
+      - name: Check out the Flutter integration branch
+        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        uses: actions/checkout@v4
+        with:
+          repository: NorthstarEngineering/RAS-Mobile-Frontend
+          ref: f9fa7535f466594980cdde7622bcb878fff542f3
+          path: frontend
+          persist-credentials: false
+      - name: Set up Flutter
+        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.1'
+      - name: Build Flutter against the disposable gateway
+        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        run: |
+          git -C frontend apply "$PWD/tests/integration/browser_frontend.patch"
+          cd frontend
+          flutter pub get
+          keys=(API MENU_API COST_API SALES_API SUPPLY_API TRANSFER_API STOCK_API REPORTS_API)
+          defines=()
+          for key in "${keys[@]}"; do defines+=("--dart-define=RAS_${key}_BASE_URL=http://127.0.0.1:5173"); done
+          flutter build web --no-pub --no-wasm-dry-run "${defines[@]}"
+      - name: Exercise browser buttons against the live stack
+        if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+          set -a
+          source .env
+          set +a
+          node tests/integration/browser_gateway.mjs frontend/build/web &
+          gateway_pid=$!
+          trap 'kill "$gateway_pid"' EXIT
+          curl --fail --retry 10 --retry-connrefused --silent http://127.0.0.1:5173/ >/dev/null
+          node tests/integration/browser_smoke.mjs
       - name: Capture service state on failure
         if: failure()
         run: docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml logs --no-color
