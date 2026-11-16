@@ -422,8 +422,10 @@ func (s *Service) ShipSupplyRequest(ctx context.Context, actorID, actorRole, req
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Central Kitchen ID
-	centralKitchenID := "99999999-9999-9999-9999-999999999999"
+	centralKitchenID, err := s.repo.ActiveCentralKitchenID(ctx, tx)
+	if err != nil {
+		return err
+	}
 
 	for _, item := range req.Items {
 		if item.ApprovedQty != nil && *item.ApprovedQty > 0 {

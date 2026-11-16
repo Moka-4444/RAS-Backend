@@ -15,6 +15,7 @@ import (
 // ============================================================
 
 type Repository interface {
+	ActiveCentralKitchenID(context.Context, *sqlx.Tx) (string, error)
 	// GetInventoryByBranchAndGood - يجيب رصيد صنف معين في فرع معين
 	GetInventoryByBranchAndGood(ctx context.Context, branchID, goodID string) (*Inventory, error)
 
@@ -251,3 +252,14 @@ func (r *postgresRepo) ListSupplyRequestItems(ctx context.Context, requestID str
 }
 
 var _ Repository = (*postgresRepo)(nil)
+
+func (r *postgresRepo) ActiveCentralKitchenID(ctx context.Context, tx *sqlx.Tx) (string, error) {
+	var kitchens []string
+	if err := tx.SelectContext(ctx, &kitchens, `SELECT id FROM branches WHERE type = 'central_kitchen' AND is_active ORDER BY id LIMIT 2`); err != nil {
+		return "", fmt.Errorf("find active central kitchen: %w", err)
+	}
+	if len(kitchens) != 1 {
+		return "", errors.New("invalid central kitchen configuration: exactly one active central kitchen is required")
+	}
+	return kitchens[0], nil
+}
