@@ -1,5 +1,5 @@
 aws_region  = "eu-west-3"
-# Local profile only; omit this value in GitHub Actions.
+# Local profile only; leave blank in GitHub Actions to use OIDC credentials.
 aws_profile = "terraform"
 
 # Replace every placeholder with unique generated values in the ignored terraform.tfvars.

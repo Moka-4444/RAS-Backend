@@ -6,6 +6,8 @@ on:
       - 'deploy/**'
       - 'database/**'
       - 'services/**'
+      - 'infra/terraform/dev/**'
+      - 'scripts/aws-dev.ps1'
       - '.env.example'
       - '.github/workflows/docker-stack.yml'
   push:
@@ -14,6 +16,8 @@ on:
       - 'deploy/**'
       - 'database/**'
       - 'services/**'
+      - 'infra/terraform/dev/**'
+      - 'scripts/aws-dev.ps1'
       - '.github/workflows/docker-stack.yml'
   workflow_dispatch:
 

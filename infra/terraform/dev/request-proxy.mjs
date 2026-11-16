@@ -1,4 +1,18 @@
 const backendTarget = (path) => {
+  const serviceHealth = new Map([
+    ["/api/v1/auth/health", [9001, "/health"]],
+    ["/api/v1/branches/health", [9002, "/health"]],
+    ["/api/v1/attendance/health", [9003, "/health"]],
+    ["/api/v1/central-kitchen/health", [9004, "/health"]],
+    ["/api/v1/menu/health", [9005, "/health"]],
+    ["/api/v1/sales/health", [9006, "/health"]],
+    ["/api/v1/cost/health", [9007, "/health"]],
+    ["/api/v1/transfers/health", [9008, "/healthz"]],
+    ["/api/v1/reports/health", [9009, "/health"]],
+    ["/api/v1/stock/health", [9010, "/healthz"]],
+  ]);
+  const health = serviceHealth.get(path);
+  if (health) return { port: health[0], path: health[1] };
   if (path === "/health" || ["/api/v1/auth", "/api/v1/users"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return { port: 9001, path };
   if (["/api/v1/branches"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return { port: 9002, path };
   if (["/api/v1/employees", "/api/v1/attendance", "/api/v1/overtime"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return { port: 9003, path };
