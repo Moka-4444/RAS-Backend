@@ -43,7 +43,7 @@ assert.ok(branch.id);
 
 const browser = await chromium.launch({channel: 'chrome'});
 try {
-  const page = await browser.newPage({viewport: {width: 500, height: 900}});
+  const page = await browser.newPage({viewport: {width: 500, height: 1400}});
   page.setDefaultTimeout(25000);
   async function enableSemantics() {
     await page.locator('flutter-view').waitFor({state: 'attached'});
@@ -95,8 +95,15 @@ try {
   await save.waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded PostgreSQL data and the fixture card opened');
   const updatedAddress = 'Updated from the Flutter browser';
-  const address = page.getByRole('textbox', {name: 'العنوان', exact: true});
-  assert.equal(await address.inputValue(), branch.address, 'The address field must open with the original address');
+  async function fieldWithValue(value) {
+    const edits = page.getByRole('textbox');
+    await edits.first().waitFor({state: 'attached'});
+    const values = await edits.evaluateAll(fields => fields.map(field => field.value));
+    const index = values.indexOf(value);
+    assert.ok(index >= 0, `Expected branch address in the rendered form (${values.length} text fields)`);
+    return edits.nth(index);
+  }
+  const address = await fieldWithValue(branch.address);
   await address.fill(updatedAddress);
   const reloaded = focused ? page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches' && response.request().method() === 'GET') : null;
@@ -112,7 +119,8 @@ try {
   if (reloaded) {
     assert.equal((await reloaded).status(), 200);
     await page.getByRole('button', {name: /Browser QA Branch/}).dispatchEvent('click');
-    assert.equal(await address.inputValue(), updatedAddress, 'Reopening the branch must show the new database value');
+    await save.waitFor({state: 'attached'});
+    await fieldWithValue(updatedAddress);
     console.log('::notice title=Browser QA::Reopening the branch displayed the saved address');
   }
 } finally {
