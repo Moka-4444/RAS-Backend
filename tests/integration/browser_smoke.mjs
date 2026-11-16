@@ -64,13 +64,15 @@ try {
   await save.waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded PostgreSQL data and the fixture card opened');
   const updatedAddress = 'Updated from the Flutter browser';
-  await page.getByRole('textbox').nth(2).fill(updatedAddress);
+  await page.getByRole('textbox', {name: 'العنوان', exact: true}).fill(updatedAddress);
   const update = page.waitForResponse(response =>
     response.url() === base + '/api/v1/branches/' + branch.id && response.request().method() === 'PATCH');
   await save.dispatchEvent('click');
-  assert.equal((await update).status(), 200);
+  const changed = await update;
+  assert.equal(changed.request().postDataJSON().address, updatedAddress, 'Flutter must send the new address');
+  assert.equal(changed.status(), 200, `Branch update HTTP ${changed.status()}`);
   const saved = await api('/branches/' + branch.id, null, session.access_token);
-  assert.equal(saved.address, updatedAddress);
+  assert.equal(saved.address, updatedAddress, 'The live database must return the new address');
   console.log('::notice title=Browser QA::Save branch button persisted the updated address');
 } finally {
   await browser.close();
