@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -156,7 +157,7 @@ func TestQARASS93ClosedShiftRejectsNewSalesAndDiscounts(t *testing.T) {
 	}
 	svc := NewService(db, repo)
 
-	closed, err := svc.CloseShift(context.Background(), CloseShiftRequest{ShiftID: rass93ShiftID})
+	closed, err := svc.CloseShift(context.Background(), CloseShiftRequest{ShiftID: rass93ShiftID, ActorID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ActorRole: "BRANCH_MANAGER"})
 	if err != nil {
 		t.Fatalf("CloseShift() error = %v", err)
 	}
@@ -176,6 +177,24 @@ func TestQARASS93ClosedShiftRejectsNewSalesAndDiscounts(t *testing.T) {
 	}
 	if stats.begins != 1 || stats.commits != 1 {
 		t.Fatalf("transaction begins/commits = %d/%d, want only close transaction 1/1", stats.begins, stats.commits)
+	}
+	if stats.auditActorID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || stats.auditActorRole != "BRANCH_MANAGER" {
+		t.Fatalf("audit actor = %q/%q, want authenticated actor ID and BRANCH_MANAGER role", stats.auditActorID, stats.auditActorRole)
+	}
+}
+
+func TestQARASS93CloseShiftRollsBackWhenAuditInsertFails(t *testing.T) {
+	db, stats := newRASS93NoopDB(t)
+	stats.auditError = errors.New("audit storage unavailable")
+	repo := &rass93SalesRepository{shift: &Shift{ID: rass93ShiftID, BranchID: "branch-1", Status: "OPEN"}}
+	svc := NewService(db, repo)
+
+	_, err := svc.CloseShift(context.Background(), CloseShiftRequest{ShiftID: rass93ShiftID, ActorID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ActorRole: "BRANCH_MANAGER"})
+	if err == nil || !strings.Contains(err.Error(), "audit storage unavailable") {
+		t.Fatalf("CloseShift() error = %v, want audit insert error", err)
+	}
+	if stats.begins != 1 || stats.commits != 0 || stats.rollbacks != 1 {
+		t.Fatalf("transaction begins/commits/rollbacks = %d/%d/%d, want 1/0/1", stats.begins, stats.commits, stats.rollbacks)
 	}
 }
 
@@ -279,8 +298,12 @@ func (r *rass93SalesRepository) GetShiftSalesTotal(_ context.Context, _ string) 
 }
 
 type rass93TxStats struct {
-	begins  int
-	commits int
+	begins         int
+	commits        int
+	rollbacks      int
+	auditActorID   string
+	auditActorRole string
+	auditError     error
 }
 
 type rass93Connector struct {
@@ -305,6 +328,19 @@ type rass93Conn struct {
 	stats *rass93TxStats
 }
 
+func (c *rass93Conn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if strings.Contains(query, "INSERT INTO audit_logs") {
+		if len(args) >= 2 {
+			c.stats.auditActorID = args[0].Value.(string)
+			c.stats.auditActorRole = args[1].Value.(string)
+		}
+		if c.stats.auditError != nil {
+			return nil, c.stats.auditError
+		}
+	}
+	return driver.RowsAffected(1), nil
+}
+
 func (c *rass93Conn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("RASS-93 fake driver does not execute SQL")
 }
@@ -324,7 +360,7 @@ type rass93Tx struct {
 	stats *rass93TxStats
 }
 
-func (*rass93Tx) Rollback() error { return nil }
+func (tx *rass93Tx) Rollback() error { tx.stats.rollbacks++; return nil }
 
 func (tx *rass93Tx) Commit() error {
 	tx.stats.commits++

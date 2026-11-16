@@ -87,12 +87,16 @@ func (s *Service) CreateRequest(ctx context.Context, in CreateRequestInput) (*Me
 
 type ApproveRequestInput struct {
 	RequestID string
+	ActorID   string
 	ActorRole string
 	SKU       string
 }
 
 func (s *Service) ApproveRequest(ctx context.Context, in ApproveRequestInput) (*MenuItem, error) {
 	if in.ActorRole != "CEO" {
+		return nil, ErrUnauthorized
+	}
+	if _, err := uuid.Parse(in.ActorID); err != nil {
 		return nil, ErrUnauthorized
 	}
 
@@ -141,7 +145,7 @@ func (s *Service) ApproveRequest(ctx context.Context, in ApproveRequestInput) (*
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
 		VALUES (gen_random_uuid(), $1, $2, 'APPROVE', 'MENU_ITEM', $3, 'Menu request approved')
-	`, req.RequestedBy, in.ActorRole, req.ID)
+	`, in.ActorID, in.ActorRole, req.ID)
 	if err != nil {
 		return nil, fmt.Errorf("audit log: %w", err)
 	}

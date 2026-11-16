@@ -3,7 +3,6 @@ package sales
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -239,6 +238,12 @@ func (s *Service) CancelDiscount(ctx context.Context, discountID string, in Canc
 // 5. Close Shift (إغلاق الوردية)
 // ============================================================
 func (s *Service) CloseShift(ctx context.Context, in CloseShiftRequest) (*Shift, error) {
+	if in.ActorRole != "BRANCH_MANAGER" && in.ActorRole != "CEO" {
+		return nil, errors.New("forbidden action")
+	}
+	if _, err := uuid.Parse(in.ActorID); err != nil {
+		return nil, errors.New("authenticated actor ID is required")
+	}
 	shift, err := s.repo.GetShiftByID(ctx, in.ShiftID)
 	if err != nil {
 		return nil, err
@@ -261,13 +266,13 @@ func (s *Service) CloseShift(ctx context.Context, in CloseShiftRequest) (*Shift,
 		return nil, err
 	}
 
-	// 2. إضافة سجل في الـ Audit Log (بدون ما نكسر العملية لو فشلت)
-	_, auditErr := tx.ExecContext(ctx, `
+	// Audit and the shift state change commit together. Missing audit data
+	// must not leave a completed business operation without a trace.
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, reason)
 		VALUES (gen_random_uuid(), $1, $2, 'CLOSE_SHIFT', 'SHIFT', $3, 'Shift closed')
-	`, shift.ManagerID, "BRANCH_MANAGER", shift.ID)
-	if auditErr != nil {
-		log.Printf("[audit] failed to log CLOSE_SHIFT: %v", auditErr)
+	`, in.ActorID, in.ActorRole, shift.ID); err != nil {
+		return nil, err
 	}
 
 	// 3. Commit الـ Transaction

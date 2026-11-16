@@ -106,7 +106,7 @@ func TestQASupplyRequestHandlersRejectUnauthorizedRoles(t *testing.T) {
 			role:   "SUPPLY_MANAGER",
 			method: http.MethodPatch,
 			path:   "/api/v1/supply/requests/request-1/receive",
-			body:   `{}`,
+			body:   `{"items":[{"item_id":"` + validUUID + `","received_qty":1}]}`,
 		},
 	}
 
@@ -130,7 +130,7 @@ func TestQASupplyRequestWorkflowRejectsInvalidStatesBeforeDatabase(t *testing.T)
 			status:    "SHIPPED",
 			wantError: "request is not pending",
 			call: func(svc *Service) error {
-				_, err := svc.ApproveSupplyRequest(context.Background(), ApproveSupplyRequestInput{RequestID: "request-1", ActorRole: "SUPPLY_MANAGER"})
+				_, err := svc.ApproveSupplyRequest(context.Background(), ApproveSupplyRequestInput{RequestID: "request-1", ActorID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ActorRole: "SUPPLY_MANAGER"})
 				return err
 			},
 		},
@@ -139,7 +139,7 @@ func TestQASupplyRequestWorkflowRejectsInvalidStatesBeforeDatabase(t *testing.T)
 			status:    "APPROVED",
 			wantError: "request is not pending",
 			call: func(svc *Service) error {
-				_, err := svc.RejectSupplyRequest(context.Background(), RejectSupplyRequestInput{RequestID: "request-1", ActorRole: "SUPPLY_MANAGER", Reason: "duplicate"})
+				_, err := svc.RejectSupplyRequest(context.Background(), RejectSupplyRequestInput{RequestID: "request-1", ActorID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ActorRole: "SUPPLY_MANAGER", Reason: "duplicate"})
 				return err
 			},
 		},
@@ -148,7 +148,7 @@ func TestQASupplyRequestWorkflowRejectsInvalidStatesBeforeDatabase(t *testing.T)
 			status:    "PENDING",
 			wantError: "request must be approved first",
 			call: func(svc *Service) error {
-				return svc.ShipSupplyRequest(context.Background(), "SUPPLY_MANAGER", "request-1")
+				return svc.ShipSupplyRequest(context.Background(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "SUPPLY_MANAGER", "request-1")
 			},
 		},
 		{
@@ -156,7 +156,7 @@ func TestQASupplyRequestWorkflowRejectsInvalidStatesBeforeDatabase(t *testing.T)
 			status:    "APPROVED",
 			wantError: "request must be shipped first",
 			call: func(svc *Service) error {
-				return svc.ReceiveSupplyRequest(context.Background(), ReceiveSupplyRequestInput{RequestID: "request-1", ActorRole: "BRANCH_MANAGER"})
+				return svc.ReceiveSupplyRequest(context.Background(), ReceiveSupplyRequestInput{RequestID: "request-1", ActorID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ActorRole: "BRANCH_MANAGER"})
 			},
 		},
 	}

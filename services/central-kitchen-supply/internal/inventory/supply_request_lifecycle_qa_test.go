@@ -18,6 +18,7 @@ import (
 
 const (
 	supplyRequestQACentralKitchenID = "99999999-9999-9999-9999-999999999999"
+	supplyRequestQAActorID          = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	supplyRequestQABranchID         = "11111111-1111-4111-8111-111111111111"
 	supplyRequestQAGoodID           = "22222222-2222-4222-8222-222222222222"
 	supplyRequestQAItemID           = "33333333-3333-4333-8333-333333333333"
@@ -59,7 +60,7 @@ func TestQASupplyRequestLifecycleApprovalQuantityAndResponse(t *testing.T) {
 	service := NewService(db, repo)
 	body := `{"items":[{"item_id":"` + supplyRequestQAItemID + `","approved_qty":4}]}`
 	res := supplyRequestQALifecycleRequest(
-		supplyRequestQALifecycleRouter(service, "", "SUPPLY_MANAGER"),
+		supplyRequestQALifecycleRouter(service, supplyRequestQAActorID, "SUPPLY_MANAGER"),
 		http.MethodPatch,
 		"/api/v1/supply/requests/request-1/approve",
 		body,
@@ -82,6 +83,7 @@ func TestQASupplyRequestLifecycleApprovalQuantityAndResponse(t *testing.T) {
 		t.Fatalf("repository status updates = %v, want [APPROVED]", repo.statusUpdates)
 	}
 	assertSupplyRequestQACommit(t, txStats)
+	assertSupplyRequestQAAuditActor(t, txStats, "SUPPLY_MANAGER")
 }
 
 func TestQASupplyRequestLifecycleShippingDeductsApprovedQuantity(t *testing.T) {
@@ -100,7 +102,7 @@ func TestQASupplyRequestLifecycleShippingDeductsApprovedQuantity(t *testing.T) {
 	}
 	service := NewService(db, repo)
 	res := supplyRequestQALifecycleRequest(
-		supplyRequestQALifecycleRouter(service, "", "SUPPLY_MANAGER"),
+		supplyRequestQALifecycleRouter(service, supplyRequestQAActorID, "SUPPLY_MANAGER"),
 		http.MethodPatch,
 		"/api/v1/supply/requests/request-1/ship",
 		"",
@@ -126,6 +128,27 @@ func TestQASupplyRequestLifecycleShippingDeductsApprovedQuantity(t *testing.T) {
 		t.Fatalf("repository status updates = %v, want [SHIPPED]", repo.statusUpdates)
 	}
 	assertSupplyRequestQACommit(t, txStats)
+	assertSupplyRequestQAAuditActor(t, txStats, "SUPPLY_MANAGER")
+	if len(repo.movements) != 1 || repo.movements[0].CreatedBy != supplyRequestQAActorID {
+		t.Fatalf("shipment movement actor = %+v, want authenticated actor %s", repo.movements, supplyRequestQAActorID)
+	}
+}
+
+func TestQASupplyRequestAuditFailureRollsBackApproval(t *testing.T) {
+	db, txStats := newSupplyRequestQATransactionDB(t)
+	txStats.auditError = errors.New("audit database unavailable")
+	repo := &supplyRequestQALifecycleRepository{request: &SupplyRequest{ID: "request-1", Status: "PENDING"}}
+	service := NewService(db, repo)
+
+	_, err := service.ApproveSupplyRequest(context.Background(), ApproveSupplyRequestInput{
+		RequestID: "request-1", ActorID: supplyRequestQAActorID, ActorRole: "SUPPLY_MANAGER",
+	})
+	if err == nil || !strings.Contains(err.Error(), "audit database unavailable") {
+		t.Fatalf("ApproveSupplyRequest() error = %v, want audit failure", err)
+	}
+	if txStats.begins != 1 || txStats.commits != 0 || txStats.rollbacks != 1 {
+		t.Fatalf("transaction begins/commits/rollbacks = %d/%d/%d, want 1/0/1", txStats.begins, txStats.commits, txStats.rollbacks)
+	}
 }
 
 func TestQASupplyRequestLifecycleReceiptAddsReceivedQuantityToBranchStock(t *testing.T) {
@@ -146,7 +169,7 @@ func TestQASupplyRequestLifecycleReceiptAddsReceivedQuantityToBranchStock(t *tes
 	service := NewService(db, repo)
 	body := `{"items":[{"item_id":"` + supplyRequestQAItemID + `","received_qty":3}]}`
 	res := supplyRequestQALifecycleRequest(
-		supplyRequestQALifecycleRouter(service, "", "BRANCH_MANAGER"),
+		supplyRequestQALifecycleRouter(service, supplyRequestQAActorID, "BRANCH_MANAGER"),
 		http.MethodPatch,
 		"/api/v1/supply/requests/request-1/receive",
 		body,
@@ -175,6 +198,10 @@ func TestQASupplyRequestLifecycleReceiptAddsReceivedQuantityToBranchStock(t *tes
 		t.Fatalf("repository status updates = %v, want [FULFILLED]", repo.statusUpdates)
 	}
 	assertSupplyRequestQACommit(t, txStats)
+	assertSupplyRequestQAAuditActor(t, txStats, "BRANCH_MANAGER")
+	if len(repo.movements) != 1 || repo.movements[0].CreatedBy != supplyRequestQAActorID {
+		t.Fatalf("receipt movement actor = %+v, want authenticated actor %s", repo.movements, supplyRequestQAActorID)
+	}
 }
 
 type supplyRequestQALifecycleRepository struct {
@@ -253,8 +280,12 @@ func (r *supplyRequestQALifecycleRepository) CreateMovement(_ context.Context, _
 }
 
 type supplyRequestQATxStats struct {
-	begins  int
-	commits int
+	begins         int
+	commits        int
+	rollbacks      int
+	auditActorID   string
+	auditActorRole string
+	auditError     error
 }
 
 type supplyRequestQATxConnector struct {
@@ -294,7 +325,18 @@ func (c *supplyRequestQATxConn) BeginTx(context.Context, driver.TxOptions) (driv
 	return &supplyRequestQATx{stats: c.stats}, nil
 }
 
-func (*supplyRequestQATxConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+// Record the authenticated identity used for each audit entry and allow
+// tests to exercise transactional rollback when audit storage fails.
+func (c *supplyRequestQATxConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if strings.Contains(query, "INSERT INTO audit_logs") {
+		if len(args) >= 2 {
+			c.stats.auditActorID = args[0].Value.(string)
+			c.stats.auditActorRole = args[1].Value.(string)
+		}
+		if c.stats.auditError != nil {
+			return nil, c.stats.auditError
+		}
+	}
 	return driver.RowsAffected(1), nil
 }
 
@@ -302,7 +344,7 @@ type supplyRequestQATx struct {
 	stats *supplyRequestQATxStats
 }
 
-func (*supplyRequestQATx) Rollback() error { return nil }
+func (tx *supplyRequestQATx) Rollback() error { tx.stats.rollbacks++; return nil }
 
 func (tx *supplyRequestQATx) Commit() error {
 	tx.stats.commits++
@@ -347,5 +389,12 @@ func assertSupplyRequestQACommit(t *testing.T, stats *supplyRequestQATxStats) {
 	t.Helper()
 	if stats.begins != 1 || stats.commits != 1 {
 		t.Fatalf("fake transaction begins/commits = %d/%d, want 1/1", stats.begins, stats.commits)
+	}
+}
+
+func assertSupplyRequestQAAuditActor(t *testing.T, stats *supplyRequestQATxStats, role string) {
+	t.Helper()
+	if stats.auditActorID != supplyRequestQAActorID || stats.auditActorRole != role {
+		t.Fatalf("audit actor = %q/%q, want authenticated actor %q/%q", stats.auditActorID, stats.auditActorRole, supplyRequestQAActorID, role)
 	}
 }
