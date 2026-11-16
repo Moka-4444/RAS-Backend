@@ -1,13 +1,13 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o main ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/api ./cmd/main.go
 
-FROM alpine:latest
+FROM alpine:3.22
 RUN apk --no-cache add ca-certificates wget
-WORKDIR /root/
-COPY --from=builder /app/main .
+WORKDIR /app
+COPY --from=builder /out/api ./api
 EXPOSE 9009
-CMD ["./main"]
+CMD ["./api"]
