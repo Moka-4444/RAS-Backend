@@ -5,9 +5,7 @@ on:
     paths:
       - 'deploy/**'
       - 'database/**'
-      - 'services/**/Dockerfile'
-      - 'services/**/go.mod'
-      - 'services/**/go.sum'
+      - 'services/**'
       - '.env.example'
       - '.github/workflows/docker-stack.yml'
   push:
@@ -15,8 +13,9 @@ on:
     paths:
       - 'deploy/**'
       - 'database/**'
-      - 'services/**/Dockerfile'
+      - 'services/**'
       - '.github/workflows/docker-stack.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -73,3 +72,110 @@ jobs:
       - name: Stop disposable stack
         if: always()
         run: docker compose --env-file .env -p ras-ci -f deploy/docker-compose.yml down
+  publish-development-images:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: compose-build-and-smoke
+    runs-on: ubuntu-latest
+    environment: development-publish
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repository: ras-auth-api
+            context: services/auth-api
+            dockerfile: services/auth-api/Dockerfile
+          - repository: ras-branch-api
+            context: services/branch-api
+            dockerfile: services/branch-api/Dockerfile
+          - repository: ras-attendance-api
+            context: services/attendance-api
+            dockerfile: services/attendance-api/Dockerfile
+          - repository: ras-menu-api
+            context: services/menu-api
+            dockerfile: services/menu-api/Dockerfile
+          - repository: ras-central-kitchen-api
+            context: services/central-kitchen-supply
+            dockerfile: services/central-kitchen-supply/Dockerfile
+          - repository: ras-inventory-api
+            context: services/inventory-api
+            dockerfile: services/inventory-api/Dockerfile
+          - repository: ras-cost-api
+            context: services/cost-api
+            dockerfile: services/cost-api/Dockerfile
+          - repository: ras-sales-api
+            context: services/sales-api
+            dockerfile: services/sales-api/Dockerfile
+          - repository: ras-transfer-api
+            context: services/transfer-api
+            dockerfile: services/transfer-api/Dockerfile
+          - repository: ras-reports-api
+            context: services/reports-api
+            dockerfile: services/reports-api/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and publish immutable development image
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          REPOSITORY: ${{ matrix.repository }}
+          BUILD_CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          image="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY}:${GITHUB_SHA}"
+          docker build --file "$DOCKERFILE" --tag "$image" "$BUILD_CONTEXT"
+          docker push "$image"
+  deploy-development-stack:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    needs: [compose-build-and-smoke, publish-development-images]
+    runs-on: ubuntu-latest
+    environment: development-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Retrieve running development host
+        id: host
+        run: |
+          set -euo pipefail
+          instance_id="$(aws ec2 describe-instances --filters 'Name=tag:Name,Values=ras-backend-dev-app-host' 'Name=instance-state-name,Values=running' --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          test "$instance_id" != "None"
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+      - name: Run migrations and deploy every API over SSM
+        env:
+          INSTANCE_ID: ${{ steps.host.outputs.instance_id }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          services=(migrate auth-api branch-api attendance-api menu-api central-kitchen-api inventory-api cost-api sales-api transfer-api reports-api)
+          for service in "${services[@]}"; do
+            command_id="$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript --parameters "commands=[sudo /usr/local/bin/ras-backend-deploy.sh $service $IMAGE_TAG]" --query 'Command.CommandId' --output text)"
+            for attempt in $(seq 1 60); do
+              status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+              case "$status" in
+                Success) break ;;
+                Failed|TimedOut|Cancelled) aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,Details:StandardErrorContent}' --output json; exit 1 ;;
+              esac
+              sleep 5
+            done
+            test "${status:-}" = Success || { echo "SSM command timed out for $service" >&2; exit 1; }
+          done
+          echo "All ten API services deployed and healthy at $IMAGE_TAG."

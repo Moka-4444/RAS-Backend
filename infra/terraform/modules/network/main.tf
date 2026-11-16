@@ -64,7 +64,7 @@ resource "aws_security_group" "api_proxy" {
   vpc_id      = aws_vpc.this.id
   egress {
     from_port       = 9001
-    to_port         = 9003
+    to_port         = 9010
     protocol        = "tcp"
     security_groups = [aws_security_group.application.id]
     description     = "Proxy Lambda to application host API ports"
@@ -77,6 +77,6 @@ resource "aws_vpc_security_group_ingress_rule" "application_from_proxy" {
   referenced_security_group_id = aws_security_group.api_proxy.id
   ip_protocol                  = "tcp"
   from_port                    = 9001
-  to_port                      = 9003
+  to_port                      = 9010
   description                  = "API listener ports from API Gateway proxy Lambda only"
 }

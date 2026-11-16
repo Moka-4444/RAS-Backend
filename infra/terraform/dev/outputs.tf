@@ -2,6 +2,7 @@ output "application_instance_id" { value = module.application.instance_id }
 output "database_endpoint" { value = module.database.endpoint }
 output "database_port" { value = module.database.port }
 output "database_name" { value = module.database.database_name }
+output "database_master_username" { value = var.database_master_username }
 output "database_master_password_parameter_name" { value = module.database.master_password_parameter_name }
 output "ecr_repository_urls" { value = module.application.ecr_repository_urls }
 output "application_instance_private_ip" { value = module.application.instance_private_ip }

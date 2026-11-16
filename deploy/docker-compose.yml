@@ -273,7 +273,12 @@ services:
         condition: service_completed_successfully
     environment:
       PORT: "9009"
-      DATABASE_URL: postgres://reports_app:${REPORTS_DB_PASSWORD:?Set REPORTS_DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-restaurant_db}?sslmode=disable
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-restaurant_db}
+      DB_USER: reports_app
+      DB_PASSWORD: ${REPORTS_DB_PASSWORD:?Set REPORTS_DB_PASSWORD in .env}
+      DB_SSLMODE: disable
     ports: ["9009:9009"]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9009/health"]
