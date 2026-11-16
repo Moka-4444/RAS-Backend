@@ -119,7 +119,9 @@ def main():
         "branch_id": "{destination}", "items": [{"good_id": "{good}", "requested_qty": 2}],
     }, 201, "supply")
     if supply:
-        state["supply_line"] = supply["items"][0]["id"]
+        items = supply.get("items", [])
+        if items:
+            state["supply_line"] = items[0]["id"]
     step("approve supply", 9004, "/supply/requests/{supply}/approve", "PATCH", {
         "items": [{"item_id": "{supply_line}", "approved_qty": 2}],
     })
@@ -159,6 +161,10 @@ def main():
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as output:
             output.write(report)
+        incomplete = [f"{label} ({detail})" for label, status, detail in results if status != "PASS"]
+        print(f"::notice title=Backend QA replay::{passed}/{len(results)} passed", flush=True)
+        if incomplete:
+            print("::error title=QA cases requiring review::" + ", ".join(incomplete), flush=True)
     if len(results) != 50 or passed != 50:
         raise SystemExit(1)
 
