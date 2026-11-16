@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   compose-build-and-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Configure disposable smoke credentials
@@ -101,8 +101,9 @@ jobs:
       - name: Exercise browser buttons against the live stack
         if: github.repository == 'Moka-4444/RAS-Backend' && github.ref == 'refs/heads/codex/backend-qa-recheck'
         run: |
+          trap 'echo "::error title=Browser QA setup::Line $LINENO failed during browser setup"' ERR
           npm install --no-save --no-package-lock playwright@1.55.0
-          npx playwright install --with-deps chromium
+          google-chrome --version
           set -a
           source .env
           set +a

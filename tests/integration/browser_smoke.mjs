@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
+process.on('uncaughtExceptionMonitor', error => {
+  console.log(`::error title=Browser QA::${error.message.split('\n')[0]}`);
+});
+
 const base = 'http://127.0.0.1:5173';
 const env = Object.fromEntries((await readFile('.env', 'utf8')).trim().split(/\r?\n/).map(line => {
   const separator = line.indexOf('=');
@@ -29,7 +33,7 @@ const branch = await api('/branches', {
 }, session.access_token);
 assert.ok(branch.id);
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({channel: 'chrome'});
 try {
   const page = await browser.newPage({viewport: {width: 500, height: 900}});
   page.setDefaultTimeout(25000);
@@ -57,9 +61,6 @@ try {
   await page.getByText('Browser QA Branch', {exact: true})
     .or(page.getByLabel(/Browser QA Branch/)).first().waitFor({state: 'attached'});
   console.log('::notice title=Browser QA::Branches button loaded and rendered the PostgreSQL fixture');
-} catch (error) {
-  console.log(`::error title=Browser QA::${error.message.split('\n')[0]}`);
-  throw error;
 } finally {
   await browser.close();
 }
