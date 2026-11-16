@@ -222,3 +222,15 @@ Both findings were test-code defects, not evidence that the Branch API runtime b
 - **Fix:** Set `force_delete = true` on the development ECR repositories so each disposable run can remove image layers and recreate clean repositories.
 - **Retest:** Terraform formatting/validation and the next full ephemeral run are pending.
 - **Prevention:** Exercise destroy behavior with populated repositories as part of infrastructure lifecycle verification, not only fresh-stack creation.
+
+### TF-026 — Main deployment workflow ran before OIDC bootstrap
+
+- **Affected area:** GitHub `Deploy AWS development stack` workflow.
+- **Environment/commit/date:** GitHub Actions on `main` commit `0255ca1c410c714c39e534d26e71976730efd581`; 2026-11-16.
+- **Severity/status:** Medium; guard implemented, retest pending.
+- **Test type:** GitHub Actions deployment bootstrap diagnosis.
+- **Symptom:** The post-merge `workflow_run` job attempted OIDC authentication with no AWS role configured and failed in `configure-aws-credentials` before publishing or deploying images.
+- **Cause:** Automatic deployment was eligible even though the `development-publish` environment had not yet been bootstrapped with the Terraform-created role, region, and API base URL.
+- **Fix:** Gate the deployment job on all three environment variables. `infra-up` creates the GitHub environment and writes these values after the AWS role and gateway exist.
+- **Retest:** The workflow should skip while unconfigured and proceed after the first successful `infra-up`; AWS publishing retest remains pending.
+- **Prevention:** Check bootstrap prerequisites in the job condition before requesting OIDC credentials.
